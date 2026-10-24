@@ -121,6 +121,7 @@ import pro.sketchware.R;
 import pro.sketchware.activities.appcompat.ManageAppCompatActivity;
 import pro.sketchware.activities.editor.command.ManageXMLCommandActivity;
 import pro.sketchware.activities.editor.view.CodeViewerActivity;
+import pro.sketchware.activities.editor.view.JavaCodeEditorActivity;
 import pro.sketchware.activities.editor.view.ViewCodeEditorActivity;
 import pro.sketchware.activities.resourceseditor.ResourcesEditorActivity;
 import pro.sketchware.databinding.DesignBinding;
@@ -450,6 +451,11 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     }
 
     @Override
+    protected boolean supportsLiquidGlass() {
+        return false;
+    }
+
+    @Override
     public void onCreate(Bundle savedInstanceState) {
         enableEdgeToEdgeNoContrast();
         super.onCreate(savedInstanceState);
@@ -534,6 +540,10 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         });
         bottomMenu.add(Menu.NONE, 7, Menu.NONE, "Direct XML editor").setOnMenuItemClickListener(item -> {
             toViewCodeEditor();
+            return true;
+        });
+        bottomMenu.add(Menu.NONE, 8, Menu.NONE, "Direct Java editor").setOnMenuItemClickListener(item -> {
+            toJavaCodeEditor();
             return true;
         });
         bottomPopupMenu.setOnDismissListener(menu -> btnOptions.setChecked(false));
@@ -905,6 +915,19 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                 launchActivity(ViewCodeEditorActivity.class, openViewCodeEditor, new Pair<>("title", filename), new Pair<>("content", content));
             });
         }).start();
+    }
+
+    /**
+     * Opens {@link JavaCodeEditorActivity} for the current activity's Java file.
+     */
+    void toJavaCodeEditor() {
+        if (projectFile == null) return;
+        String javaName = projectFile.getJavaName();
+        if (javaName.isEmpty()) {
+            SketchwareUtil.toast("Only activities have a Java file to edit");
+            return;
+        }
+        launchActivity(JavaCodeEditorActivity.class, null, new Pair<>("title", javaName));
     }
 
     /**

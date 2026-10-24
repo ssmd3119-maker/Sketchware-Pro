@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.DialogInterface.OnCancelListener;
+import android.content.res.TypedArray;
 import android.graphics.Color;
 import android.os.AsyncTask.Status;
 import android.os.Build;
@@ -27,7 +28,9 @@ import java.util.ArrayList;
 import a.a.a.MA;
 import a.a.a.lC;
 import dev.chrisbanes.insetter.Insetter;
+import pro.sketchware.R;
 import pro.sketchware.dialogs.ProgressDialog;
+import pro.sketchware.utility.theme.ThemeManager;
 
 public abstract class BaseAppCompatActivity extends AppCompatActivity {
 
@@ -39,6 +42,7 @@ public abstract class BaseAppCompatActivity extends AppCompatActivity {
     protected ProgressDialog progressDialog;
     private LoadingDialog lottieDialog;
     private ArrayList<MA> taskList;
+    private boolean liquidGlassApplied;
 
     public void a(MA var1) {
         taskList.add(var1);
@@ -109,6 +113,10 @@ public abstract class BaseAppCompatActivity extends AppCompatActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        liquidGlassApplied = shouldApplyLiquidGlass();
+        if (liquidGlassApplied) {
+            getTheme().applyStyle(R.style.ThemeOverlay_SketchwarePro_LiquidGlass, true);
+        }
         super.onCreate(savedInstanceState);
         e = getApplicationContext();
         taskList = new ArrayList<>();
@@ -138,6 +146,11 @@ public abstract class BaseAppCompatActivity extends AppCompatActivity {
     @Override
     public void onResume() {
         super.onResume();
+        if (shouldApplyLiquidGlass() != liquidGlassApplied) {
+            // Liquid Glass was toggled in Settings while this screen was in the back stack.
+            recreate();
+            return;
+        }
         if (lottieDialog != null && lottieDialog.isShowing()) {
             lottieDialog.resumeAnimation();
         }
@@ -157,6 +170,27 @@ public abstract class BaseAppCompatActivity extends AppCompatActivity {
             return parent.onOptionsItemSelected(item);
         }
         return false;
+    }
+
+    /**
+     * Whether this screen may use the Liquid Glass theme. Editors whose panels sit over a canvas
+     * return false so those panels stay opaque.
+     */
+    protected boolean supportsLiquidGlass() {
+        return true;
+    }
+
+    private boolean shouldApplyLiquidGlass() {
+        if (!supportsLiquidGlass() || !ThemeManager.isLiquidGlassEnabled(this)) {
+            return false;
+        }
+        // Translucent and floating windows keep their own backgrounds.
+        TypedArray a = obtainStyledAttributes(new int[]{android.R.attr.windowIsTranslucent, android.R.attr.windowIsFloating});
+        try {
+            return !a.getBoolean(0, false) && !a.getBoolean(1, false);
+        } finally {
+            a.recycle();
+        }
     }
 
     public void handleInsetts(View root) {

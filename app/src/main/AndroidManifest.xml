@@ -312,6 +312,11 @@
             android:configChanges="orientation|screenSize" />
 
         <activity
+            android:name=".activities.editor.view.JavaCodeEditorActivity"
+            android:configChanges="orientation|screenSize"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".activities.editor.view.CodeViewerActivity"
             android:configChanges="orientation|screenSize" />
 

@@ -53,6 +53,11 @@ public class MakeBlockActivity extends BaseAppCompatActivity {
     }
 
     @Override
+    protected boolean supportsLiquidGlass() {
+        return false;
+    }
+
+    @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (!isStoragePermissionGranted()) {
