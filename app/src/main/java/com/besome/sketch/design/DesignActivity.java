@@ -179,6 +179,11 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     });
     private rs eventTabAdapter;
     private br componentTabAdapter;
+    private final ActivityResultLauncher<Intent> openJavaCodeEditor = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+        if (result.getResultCode() == RESULT_OK) {
+            refreshEventTabAdapter();
+        }
+    });
     private final ActivityResultLauncher<Intent> openImageManager = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
         if (result.getResultCode() == RESULT_OK) {
             refresh();
@@ -927,7 +932,7 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
             SketchwareUtil.toast("Only activities have a Java file to edit");
             return;
         }
-        launchActivity(JavaCodeEditorActivity.class, null, new Pair<>("title", javaName));
+        launchActivity(JavaCodeEditorActivity.class, openJavaCodeEditor, new Pair<>("title", javaName));
     }
 
     /**

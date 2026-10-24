@@ -9,10 +9,12 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.appcompat.content.res.AppCompatResources;
 
+import com.besome.sketch.beans.ProjectFileBean;
 import com.besome.sketch.lib.base.BaseAppCompatActivity;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
-import java.io.File;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -23,25 +25,22 @@ import mod.hey.studios.util.Helper;
 import pro.sketchware.R;
 import pro.sketchware.databinding.ViewCodeEditorBinding;
 import pro.sketchware.utility.EditorUtils;
-import pro.sketchware.utility.FilePathUtil;
-import pro.sketchware.utility.FileUtil;
 import pro.sketchware.utility.SketchwareUtil;
 
 /**
- * Lets the user edit an activity's Java source directly.
+ * Edits an activity's Java and converts it back to blocks.
  * <p>
- * Saving writes the code to /Internal storage/.sketchware/data/&lt;sc_id&gt;/files/java/&lt;ActivityName&gt;.java.
- * {@link yq} skips generating an activity when a file with that name exists there, and
- * {@link a.a.a.ProjectBuilder} compiles that directory, so the saved file replaces the generated code.
- * Reverting deletes the file so the activity is generated from blocks again.
+ * The code of every event is shown between {@code //#region sw:<event>} and {@code //#endregion} markers.
+ * Saving stores each changed section in its event as an "add source directly" block, see
+ * {@link EventCodeBridge}. Nothing is written to disk here; the project is saved by the Design screen
+ * like changes made in the Logic editor.
  */
 public class JavaCodeEditorActivity extends BaseAppCompatActivity {
 
     private static final int MENU_UNDO = 0;
     private static final int MENU_REDO = 1;
     private static final int MENU_SAVE = 2;
-    private static final int MENU_REVERT = 3;
-    private static final int MENU_RELOAD_SCHEME = 4;
+    private static final int MENU_RELOAD_SCHEME = 3;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -49,14 +48,14 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
     private CodeEditor editor;
 
     private String sc_id;
-    private String javaName;
-    private File overrideFile;
+    private EventCodeBridge bridge;
 
     /**
-     * The text last loaded or saved, used to detect unsaved changes. {@code null} while loading.
+     * The text as generated, used to detect unsaved changes. {@code null} while loading.
      */
-    private String savedContent;
-    private boolean isOverridden;
+    private String generatedCode;
+    private LinkedHashMap<String, String> generatedSections;
+    private String generatedSkeleton;
 
     private final OnBackPressedCallback onBackPressedCallback = new OnBackPressedCallback(true) {
         @Override
@@ -66,9 +65,7 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
                         .setIcon(R.drawable.ic_warning_96dp)
                         .setTitle(Helper.getResString(R.string.common_word_warning))
                         .setMessage(Helper.getResString(R.string.src_code_editor_unsaved_changes_dialog_warning_message))
-                        .setPositiveButton(Helper.getResString(R.string.common_word_save), (d, which) -> {
-                            if (save()) finish();
-                        })
+                        .setPositiveButton(Helper.getResString(R.string.common_word_save), (d, which) -> save(true))
                         .setNeutralButton(Helper.getResString(R.string.common_word_exit), (d, which) -> finish())
                         .setNegativeButton(Helper.getResString(R.string.common_word_cancel), null)
                         .show();
@@ -86,8 +83,20 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         setContentView(binding.getRoot());
 
         sc_id = savedInstanceState == null ? getIntent().getStringExtra("sc_id") : savedInstanceState.getString("sc_id");
-        javaName = getIntent().getStringExtra("title");
-        overrideFile = new File(new FilePathUtil().getPathJava(sc_id), javaName);
+        String javaName = getIntent().getStringExtra("title");
+        ProjectFileBean projectFile = null;
+        for (ProjectFileBean file : jC.b(sc_id).b()) {
+            if (javaName != null && javaName.equals(file.getJavaName())) {
+                projectFile = file;
+                break;
+            }
+        }
+        if (projectFile == null) {
+            SketchwareUtil.toastError("Activity " + javaName + " not found");
+            finish();
+            return;
+        }
+        bridge = new EventCodeBridge(sc_id, projectFile);
 
         getOnBackPressedDispatcher().addCallback(this, onBackPressedCallback);
         setSupportActionBar(binding.toolbar);
@@ -101,13 +110,12 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         EditorUtils.loadJavaConfig(editor);
         editor.setEditable(false);
 
+        binding.noteCard.setVisibility(View.VISIBLE);
+        binding.note.setText("Edit code between \"//#region sw:\" and \"//#endregion\" markers; each section is one event."
+                + " Saving turns changed sections back into blocks. Keep the markers.");
         binding.close.setOnClickListener(v -> binding.noteCard.setVisibility(View.GONE));
 
-        if (overrideFile.exists()) {
-            setLoadedContent(FileUtil.readFile(overrideFile.getAbsolutePath()), true);
-        } else {
-            loadGeneratedCode();
-        }
+        loadCode(0);
     }
 
     @Override
@@ -122,14 +130,19 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         executor.shutdownNow();
     }
 
-    private void loadGeneratedCode() {
-        savedContent = null;
+    /**
+     * Generates the activity's Java from its current blocks.
+     *
+     * @param line Line to move the cursor to once loaded.
+     */
+    private void loadCode(int line) {
+        generatedCode = null;
         editor.setEditable(false);
         k();
         executor.execute(() -> {
             String code;
             try {
-                code = new yq(getApplicationContext(), sc_id).getFileSrc(javaName, jC.b(sc_id), jC.a(sc_id), jC.c(sc_id));
+                code = bridge.generate(new yq(getApplicationContext(), sc_id));
             } catch (Exception e) {
                 code = "";
             }
@@ -142,29 +155,15 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
                     finish();
                     return;
                 }
-                setLoadedContent(result, false);
+                generatedCode = result;
+                generatedSections = EventCodeBridge.parseSections(result);
+                generatedSkeleton = EventCodeBridge.skeleton(result);
+                editor.setText(result);
+                editor.setEditable(true);
+                int lastLine = editor.getText().getLineCount() - 1;
+                editor.setSelection(Math.min(line, lastLine), 0);
             });
         });
-    }
-
-    private void setLoadedContent(String code, boolean overridden) {
-        savedContent = code;
-        isOverridden = overridden;
-        editor.setText(code);
-        editor.setEditable(true);
-        updateNote();
-        invalidateOptionsMenu();
-    }
-
-    private void updateNote() {
-        binding.noteCard.setVisibility(View.VISIBLE);
-        if (isOverridden) {
-            binding.note.setText("This activity uses your custom Java. Blocks and events from the Logic editor"
-                    + " are ignored until you revert to generated code.");
-        } else {
-            binding.note.setText("Showing generated code. Saving replaces it, and later changes from blocks"
-                    + " won't apply until you revert.");
-        }
     }
 
     @Override
@@ -178,7 +177,6 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         menu.add(Menu.NONE, MENU_SAVE, Menu.NONE, "Save")
                 .setIcon(AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_save))
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
-        menu.add(Menu.NONE, MENU_REVERT, Menu.NONE, "Revert to generated code").setVisible(isOverridden);
         menu.add(Menu.NONE, MENU_RELOAD_SCHEME, Menu.NONE, "Reload color schemes");
         return true;
     }
@@ -189,14 +187,13 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
             case MENU_UNDO -> editor.undo();
             case MENU_REDO -> editor.redo();
             case MENU_SAVE -> {
-                if (savedContent == null) return true;
-                if (isContentModified() || !isOverridden) {
-                    if (save()) SketchwareUtil.toast("Saved");
+                if (generatedCode == null) return true;
+                if (isContentModified()) {
+                    save(false);
                 } else {
                     SketchwareUtil.toast("No changes to save");
                 }
             }
-            case MENU_REVERT -> confirmRevert();
             case MENU_RELOAD_SCHEME -> EditorUtils.loadJavaConfig(editor);
             default -> {
                 return super.onOptionsItemSelected(item);
@@ -205,45 +202,70 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         return true;
     }
 
-    private boolean save() {
-        try {
-            String code = editor.getText().toString();
-            FileUtil.makeDir(overrideFile.getParent());
-            FileUtil.writeFile(overrideFile.getAbsolutePath(), code);
-            if (!code.equals(FileUtil.readFile(overrideFile.getAbsolutePath()))) {
-                SketchwareUtil.toastError("Failed to save " + overrideFile.getAbsolutePath());
-                return false;
+    /**
+     * Converts changed sections to blocks.
+     *
+     * @param finishAfter Close the editor once saved, otherwise reload the code from the new blocks.
+     */
+    private void save(boolean finishAfter) {
+        String code = editor.getText().toString();
+        LinkedHashMap<String, String> sections = EventCodeBridge.parseSections(code);
+
+        for (String key : generatedSections.keySet()) {
+            if (!sections.containsKey(key)) {
+                new MaterialAlertDialogBuilder(this)
+                        .setIcon(R.drawable.ic_warning_96dp)
+                        .setTitle("Missing event markers")
+                        .setMessage("The markers of \"" + key + "\" were removed or changed, so its code can't be"
+                                + " matched to the event. Restore \"//#region sw:" + key + "\" and"
+                                + " \"//#endregion sw:" + key + "\" around its code, or use Undo.")
+                        .setPositiveButton(R.string.common_word_ok, null)
+                        .show();
+                return;
             }
-            savedContent = code;
-            if (!isOverridden) {
-                isOverridden = true;
-                updateNote();
-                invalidateOptionsMenu();
+        }
+
+        LinkedHashMap<String, String> changed = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : generatedSections.entrySet()) {
+            String key = entry.getKey();
+            String newBody = EventCodeBridge.normalizeBody(sections.get(key));
+            if (!newBody.equals(EventCodeBridge.normalizeBody(entry.getValue()))) {
+                changed.put(key, newBody);
             }
+        }
+
+        if (!EventCodeBridge.skeleton(code).equals(generatedSkeleton)) {
+            new MaterialAlertDialogBuilder(this)
+                    .setIcon(R.drawable.ic_warning_96dp)
+                    .setTitle("Changes outside events")
+                    .setMessage("Some changes are outside the event sections (for example imports, fields or"
+                            + " generated methods). Those parts are generated from your project and can't be"
+                            + " turned into blocks, so they will be discarded.\n\n"
+                            + "Tip: put code that needs to run inside an event section, or use an"
+                            + " \"add source directly\" block in the Import event for imports.")
+                    .setPositiveButton("Save events", (d, which) -> applyAndReload(changed, finishAfter))
+                    .setNegativeButton(R.string.common_word_cancel, null)
+                    .show();
+            return;
+        }
+        applyAndReload(changed, finishAfter);
+    }
+
+    private void applyAndReload(Map<String, String> changed, boolean finishAfter) {
+        if (!changed.isEmpty()) {
+            bridge.applyChanges(changed);
             setResult(RESULT_OK);
-            return true;
-        } catch (Exception e) {
-            SketchwareUtil.toastError(e.toString());
-            return false;
+        }
+        SketchwareUtil.toast(changed.isEmpty() ? "No event changes to save"
+                : "Saved " + changed.size() + (changed.size() == 1 ? " event" : " events") + " as blocks");
+        if (finishAfter) {
+            finish();
+        } else {
+            loadCode(editor.getCursor().getLeftLine());
         }
     }
 
-    private void confirmRevert() {
-        new MaterialAlertDialogBuilder(this)
-                .setIcon(R.drawable.ic_warning_96dp)
-                .setTitle("Revert to generated code?")
-                .setMessage("Your custom " + javaName + " will be deleted and the activity will be generated from blocks again.")
-                .setPositiveButton("Revert", (d, which) -> {
-                    FileUtil.deleteFile(overrideFile.getAbsolutePath());
-                    isOverridden = false;
-                    setResult(RESULT_OK);
-                    loadGeneratedCode();
-                })
-                .setNegativeButton(Helper.getResString(R.string.common_word_cancel), null)
-                .show();
-    }
-
     private boolean isContentModified() {
-        return savedContent != null && !savedContent.equals(editor.getText().toString());
+        return generatedCode != null && !generatedCode.equals(editor.getText().toString());
     }
 }
