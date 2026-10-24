@@ -456,11 +456,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     }
 
     @Override
-    protected boolean supportsLiquidGlass() {
-        return false;
-    }
-
-    @Override
     public void onCreate(Bundle savedInstanceState) {
         enableEdgeToEdgeNoContrast();
         super.onCreate(savedInstanceState);

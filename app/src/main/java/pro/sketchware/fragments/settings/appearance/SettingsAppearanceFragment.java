@@ -79,8 +79,6 @@ public class SettingsAppearanceFragment extends qA {
         updateThemeCardSelection(ThemeManager.getCurrentTheme(requireContext()));
 
         setThemeCardsEnabled(!isSystemTheme);
-
-        binding.switchLiquidGlass.setChecked(ThemeManager.isLiquidGlassEnabled(requireContext()));
     }
 
     private void setupClickListeners() {
@@ -103,14 +101,6 @@ public class SettingsAppearanceFragment extends qA {
                 updateThemeCardSelection(ThemeManager.THEME_LIGHT);
                 ThemeManager.applyTheme(requireContext(), ThemeManager.THEME_LIGHT);
             }
-        });
-
-        binding.liquidGlass.setOnClickListener(v -> binding.switchLiquidGlass.toggle());
-
-        binding.switchLiquidGlass.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (isChecked == ThemeManager.isLiquidGlassEnabled(requireContext())) return;
-            ThemeManager.setLiquidGlassEnabled(requireContext(), isChecked);
-            requireActivity().recreate();
         });
 
         binding.themeDark.setOnClickListener(v -> {

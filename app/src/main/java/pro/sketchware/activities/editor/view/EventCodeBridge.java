@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 import a.a.a.eC;
 import a.a.a.jC;
 import a.a.a.yq;
+import mod.hey.studios.moreblock.ReturnMoreblockManager;
 
 /**
  * Converts an activity's blocks to Java and edited Java back to blocks, without any extra files.
@@ -40,6 +41,10 @@ public class EventCodeBridge {
     private static final Pattern REGION = Pattern.compile(
             "^[ \\t]*" + Pattern.quote(BEGIN) + "(\\S+)[ \\t]*\\R(.*?)^[ \\t]*" + Pattern.quote(END) + "\\1[ \\t]*$",
             Pattern.MULTILINE | Pattern.DOTALL);
+
+    private static final Pattern MARKER_LINE = Pattern.compile(
+            "^[ \\t]*//#(?:end)?region sw:\\S*[ \\t]*\\R?", Pattern.MULTILINE);
+    private static final String MORE_BLOCK_SUFFIX = "_moreBlock";
 
     private static final String ASD_SPEC = "add source directly %s.inputOnly";
     private static final String ASD_OPCODE = "addSourceDirectly";
@@ -94,6 +99,61 @@ public class EventCodeBridge {
             sections.putIfAbsent(matcher.group(1), matcher.group(2));
         }
         return sections;
+    }
+
+    /**
+     * Finds the body of a More Block's method by its name, for when its markers were lost while editing.
+     *
+     * @param eventKey A More Block event key, {@code <name>_moreBlock}.
+     * @return The method body without marker lines, or {@code null} if the method can't be found.
+     */
+    @Nullable
+    public static String findMoreBlockBody(String code, String eventKey) {
+        if (!eventKey.endsWith(MORE_BLOCK_SUFFIX)) return null;
+        String name = eventKey.substring(0, eventKey.length() - MORE_BLOCK_SUFFIX.length());
+        Matcher matcher = Pattern.compile("\\b_" + Pattern.quote(ReturnMoreblockManager.getMbName(name)) + "\\s*\\(")
+                .matcher(code);
+        while (matcher.find()) {
+            int paramsEnd = findClosing(code, matcher.end() - 1, '(', ')');
+            if (paramsEnd < 0) continue;
+            int open = paramsEnd + 1;
+            while (open < code.length() && Character.isWhitespace(code.charAt(open))) open++;
+            // A call such as "_name(x);" is followed by something other than "{".
+            if (open >= code.length() || code.charAt(open) != '{') continue;
+            int close = findClosing(code, open, '{', '}');
+            if (close < 0) return null;
+            return MARKER_LINE.matcher(code.substring(open + 1, close)).replaceAll("");
+        }
+        return null;
+    }
+
+    /**
+     * @return Index of the bracket closing the one at {@code start}, skipping strings, chars and
+     * comments, or -1.
+     */
+    private static int findClosing(String code, int start, char openChar, char closeChar) {
+        int depth = 0;
+        for (int i = start; i < code.length(); i++) {
+            char c = code.charAt(i);
+            char next = i + 1 < code.length() ? code.charAt(i + 1) : 0;
+            if (c == '/' && next == '/') {
+                i = code.indexOf('\n', i);
+                if (i < 0) return -1;
+            } else if (c == '/' && next == '*') {
+                i = code.indexOf("*/", i + 2);
+                if (i < 0) return -1;
+                i++;
+            } else if (c == '"' || c == '\'') {
+                for (i++; i < code.length() && code.charAt(i) != c; i++) {
+                    if (code.charAt(i) == '\\') i++;
+                }
+            } else if (c == openChar) {
+                depth++;
+            } else if (c == closeChar && --depth == 0) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -177,7 +237,7 @@ public class EventCodeBridge {
         ArrayList<Pair<String, String>> moreBlocks = dataManager.i(javaName);
         if (moreBlocks != null) {
             for (Pair<String, String> moreBlock : moreBlocks) {
-                keys.add(moreBlock.first + "_moreBlock");
+                keys.add(moreBlock.first + MORE_BLOCK_SUFFIX);
             }
         }
         return keys;

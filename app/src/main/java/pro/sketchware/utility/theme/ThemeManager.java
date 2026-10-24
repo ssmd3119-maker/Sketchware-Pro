@@ -13,7 +13,6 @@ public class ThemeManager {
     public static final int THEME_DARK = 2;
     private static final String THEME_PREF = "themedata";
     private static final String THEME_KEY = "idetheme";
-    private static final String LIQUID_GLASS_KEY = "liquid_glass";
 
     public static void applyTheme(Context context, int type) {
         saveTheme(context, type);
@@ -47,14 +46,6 @@ public class ThemeManager {
             case Configuration.UI_MODE_NIGHT_YES -> THEME_DARK;
             default -> THEME_SYSTEM;
         };
-    }
-
-    public static boolean isLiquidGlassEnabled(Context context) {
-        return getPreferences(context).getBoolean(LIQUID_GLASS_KEY, true);
-    }
-
-    public static void setLiquidGlassEnabled(Context context, boolean enabled) {
-        getPreferences(context).edit().putBoolean(LIQUID_GLASS_KEY, enabled).apply();
     }
 
     private static void saveTheme(Context context, int theme) {

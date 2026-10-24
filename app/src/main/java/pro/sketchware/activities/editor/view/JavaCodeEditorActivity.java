@@ -4,6 +4,7 @@ import android.os.Bundle;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
@@ -13,7 +14,9 @@ import com.besome.sketch.beans.ProjectFileBean;
 import com.besome.sketch.lib.base.BaseAppCompatActivity;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -112,7 +115,7 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
 
         binding.noteCard.setVisibility(View.VISIBLE);
         binding.note.setText("Edit code between \"//#region sw:\" and \"//#endregion\" markers; each section is one event."
-                + " Saving turns changed sections back into blocks. Keep the markers.");
+                + " Saving turns changed sections back into blocks.");
         binding.close.setOnClickListener(v -> binding.noteCard.setVisibility(View.GONE));
 
         loadCode(0);
@@ -211,24 +214,21 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         String code = editor.getText().toString();
         LinkedHashMap<String, String> sections = EventCodeBridge.parseSections(code);
 
-        for (String key : generatedSections.keySet()) {
-            if (!sections.containsKey(key)) {
-                new MaterialAlertDialogBuilder(this)
-                        .setIcon(R.drawable.ic_warning_96dp)
-                        .setTitle("Missing event markers")
-                        .setMessage("The markers of \"" + key + "\" were removed or changed, so its code can't be"
-                                + " matched to the event. Restore \"//#region sw:" + key + "\" and"
-                                + " \"//#endregion sw:" + key + "\" around its code, or use Undo.")
-                        .setPositiveButton(R.string.common_word_ok, null)
-                        .show();
-                return;
-            }
-        }
-
         LinkedHashMap<String, String> changed = new LinkedHashMap<>();
+        ArrayList<String> unmatched = new ArrayList<>();
         for (Map.Entry<String, String> entry : generatedSections.entrySet()) {
             String key = entry.getKey();
-            String newBody = EventCodeBridge.normalizeBody(sections.get(key));
+            String body = sections.get(key);
+            if (body == null) {
+                // Markers were lost while editing. More Blocks can still be found by their method name;
+                // other events keep their blocks.
+                body = EventCodeBridge.findMoreBlockBody(code, key);
+                if (body == null) {
+                    unmatched.add(key);
+                    continue;
+                }
+            }
+            String newBody = EventCodeBridge.normalizeBody(body);
             if (!newBody.equals(EventCodeBridge.normalizeBody(entry.getValue()))) {
                 changed.put(key, newBody);
             }
@@ -243,21 +243,25 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
                             + " turned into blocks, so they will be discarded.\n\n"
                             + "Tip: put code that needs to run inside an event section, or use an"
                             + " \"add source directly\" block in the Import event for imports.")
-                    .setPositiveButton("Save events", (d, which) -> applyAndReload(changed, finishAfter))
+                    .setPositiveButton("Save events", (d, which) -> applyAndReload(changed, unmatched, finishAfter))
                     .setNegativeButton(R.string.common_word_cancel, null)
                     .show();
             return;
         }
-        applyAndReload(changed, finishAfter);
+        applyAndReload(changed, unmatched, finishAfter);
     }
 
-    private void applyAndReload(Map<String, String> changed, boolean finishAfter) {
+    private void applyAndReload(Map<String, String> changed, List<String> unmatched, boolean finishAfter) {
         if (!changed.isEmpty()) {
             bridge.applyChanges(changed);
             setResult(RESULT_OK);
         }
-        SketchwareUtil.toast(changed.isEmpty() ? "No event changes to save"
-                : "Saved " + changed.size() + (changed.size() == 1 ? " event" : " events") + " as blocks");
+        String message = changed.isEmpty() ? "No event changes to save"
+                : "Saved " + changed.size() + (changed.size() == 1 ? " event" : " events") + " as blocks";
+        if (!unmatched.isEmpty()) {
+            message += "\nKept blocks unchanged for " + String.join(", ", unmatched) + " (its markers were removed)";
+        }
+        SketchwareUtil.toast(message, unmatched.isEmpty() ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG);
         if (finishAfter) {
             finish();
         } else {
