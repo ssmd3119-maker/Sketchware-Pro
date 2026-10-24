@@ -25,13 +25,13 @@
                 android:layout_height="wrap_content"
                 app:layout_scrollFlags="scroll|enterAlways|snap" />
 
-            <com.google.android.material.card.MaterialCardView
+            <pro.sketchware.widgets.LiquidGlassView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginHorizontal="16dp"
                 android:layout_marginTop="8dp"
-                app:cardBackgroundColor="?colorSurfaceContainer"
-                app:cardCornerRadius="50dp"
+                app:glassCornerRadius="50dp"
+                app:glassTint="?colorSurfaceContainer"
                 app:layout_scrollFlags="scroll|enterAlways|snap">
 
                 <com.google.android.material.appbar.MaterialToolbar
@@ -47,7 +47,7 @@
                         android:text="Search for projects..."
                         android:textColor="?attr/colorOnSurfaceVariant" />
                 </com.google.android.material.appbar.MaterialToolbar>
-            </com.google.android.material.card.MaterialCardView>
+            </pro.sketchware.widgets.LiquidGlassView>
         </com.google.android.material.appbar.AppBarLayout>
 
         <androidx.fragment.app.FragmentContainerView
@@ -68,25 +68,34 @@
             app:layout_behavior="com.google.android.material.behavior.HideViewOnScrollBehavior"
             tools:ignore="ContentDescription" />
 
-        <LinearLayout
+        <pro.sketchware.widgets.LiquidGlassView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
-            android:orientation="vertical">
+            app:glassCornerRadius="0dp"
+            app:glassTint="?colorSurfaceContainer">
 
-            <com.google.android.material.divider.MaterialDivider
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:dividerColor="?attr/colorSurfaceContainerHighest" />
+                android:orientation="vertical">
 
-            <com.google.android.material.bottomnavigation.BottomNavigationView
-                android:id="@+id/bottom_nav"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_gravity="bottom"
-                app:menu="@menu/main_menu" />
+                <com.google.android.material.divider.MaterialDivider
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:dividerColor="?attr/colorSurfaceContainerHighest" />
 
-        </LinearLayout>
+                <!-- The surrounding LiquidGlassView paints the bar's surface. -->
+                <com.google.android.material.bottomnavigation.BottomNavigationView
+                    android:id="@+id/bottom_nav"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="bottom"
+                    android:background="@android:color/transparent"
+                    app:menu="@menu/main_menu" />
+
+            </LinearLayout>
+        </pro.sketchware.widgets.LiquidGlassView>
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 
     <com.besome.sketch.MainDrawer

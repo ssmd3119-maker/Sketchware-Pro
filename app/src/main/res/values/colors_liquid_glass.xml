@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Specular highlight drawn across the top of LiquidGlassView. -->
+    <color name="glass_highlight_start">#59FFFFFF</color>
+    <color name="glass_highlight_end">#00FFFFFF</color>
+</resources>

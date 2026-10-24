@@ -1918,6 +1918,11 @@ public class LogicEditorActivity extends BaseAppCompatActivity implements View.O
     }
 
     @Override
+    protected boolean supportsLiquidGlass() {
+        return false;
+    }
+
+    @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         binding = LogicEditorBinding.inflate(getLayoutInflater());
