@@ -4,7 +4,6 @@ import android.os.Bundle;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
-import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
@@ -15,9 +14,6 @@ import com.besome.sketch.lib.base.BaseAppCompatActivity;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -57,8 +53,6 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
      * The text as generated, used to detect unsaved changes. {@code null} while loading.
      */
     private String generatedCode;
-    private LinkedHashMap<String, String> generatedSections;
-    private String generatedSkeleton;
 
     private final OnBackPressedCallback onBackPressedCallback = new OnBackPressedCallback(true) {
         @Override
@@ -114,8 +108,9 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         editor.setEditable(false);
 
         binding.noteCard.setVisibility(View.VISIBLE);
-        binding.note.setText("Edit code between \"//#region sw:\" and \"//#endregion\" markers; each section is one event."
-                + " Saving turns changed sections back into blocks.");
+        binding.note.setText("Each \"//#region sw:\" section is one event; saving turns it back into blocks."
+                + " Add your own methods, fields and imports anywhere, or in the javaEditor sections."
+                + " Rename or delete a More Block's method to rename or delete the More Block.");
         binding.close.setOnClickListener(v -> binding.noteCard.setVisibility(View.GONE));
 
         loadCode(0);
@@ -159,8 +154,6 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
                     return;
                 }
                 generatedCode = result;
-                generatedSections = EventCodeBridge.parseSections(result);
-                generatedSkeleton = EventCodeBridge.skeleton(result);
                 editor.setText(result);
                 editor.setEditable(true);
                 int lastLine = editor.getText().getLineCount() - 1;
@@ -211,57 +204,42 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
      * @param finishAfter Close the editor once saved, otherwise reload the code from the new blocks.
      */
     private void save(boolean finishAfter) {
-        String code = editor.getText().toString();
-        LinkedHashMap<String, String> sections = EventCodeBridge.parseSections(code);
+        EventCodeBridge.Plan plan = bridge.plan(generatedCode, editor.getText().toString());
 
-        LinkedHashMap<String, String> changed = new LinkedHashMap<>();
-        ArrayList<String> unmatched = new ArrayList<>();
-        for (Map.Entry<String, String> entry : generatedSections.entrySet()) {
-            String key = entry.getKey();
-            String body = sections.get(key);
-            if (body == null) {
-                // Markers were lost while editing. More Blocks can still be found by their method name;
-                // other events keep their blocks.
-                body = EventCodeBridge.findMoreBlockBody(code, key);
-                if (body == null) {
-                    unmatched.add(key);
-                    continue;
-                }
-            }
-            String newBody = EventCodeBridge.normalizeBody(body);
-            if (!newBody.equals(EventCodeBridge.normalizeBody(entry.getValue()))) {
-                changed.put(key, newBody);
-            }
+        ArrayList<String> warnings = new ArrayList<>();
+        if (!plan.deletedMoreBlocks.isEmpty()) {
+            warnings.add("These More Blocks will be deleted because their methods were removed: "
+                    + String.join(", ", plan.deletedMoreBlocks) + ". Remove any remaining calls to them.");
+        }
+        if (plan.discardedChanges > 0) {
+            warnings.add(plan.discardedChanges + (plan.discardedChanges == 1 ? " change" : " changes")
+                    + " to generated code (for example widget fields, listeners or generated methods) can't be"
+                    + " stored and will come back. Change those in the Design or Logic editor instead.");
+        }
+        if (!plan.unmatchedEvents.isEmpty()) {
+            warnings.add("Event markers were removed for " + String.join(", ", plan.unmatchedEvents)
+                    + ", so those events keep their blocks.");
         }
 
-        if (!EventCodeBridge.skeleton(code).equals(generatedSkeleton)) {
+        if (warnings.isEmpty()) {
+            applyAndReload(plan, finishAfter);
+        } else {
             new MaterialAlertDialogBuilder(this)
                     .setIcon(R.drawable.ic_warning_96dp)
-                    .setTitle("Changes outside events")
-                    .setMessage("Some changes are outside the event sections (for example imports, fields or"
-                            + " generated methods). Those parts are generated from your project and can't be"
-                            + " turned into blocks, so they will be discarded.\n\n"
-                            + "Tip: put code that needs to run inside an event section, or use an"
-                            + " \"add source directly\" block in the Import event for imports.")
-                    .setPositiveButton("Save events", (d, which) -> applyAndReload(changed, unmatched, finishAfter))
+                    .setTitle("Before saving")
+                    .setMessage(String.join("\n\n", warnings))
+                    .setPositiveButton(Helper.getResString(R.string.common_word_save), (d, which) -> applyAndReload(plan, finishAfter))
                     .setNegativeButton(R.string.common_word_cancel, null)
                     .show();
-            return;
         }
-        applyAndReload(changed, unmatched, finishAfter);
     }
 
-    private void applyAndReload(Map<String, String> changed, List<String> unmatched, boolean finishAfter) {
-        if (!changed.isEmpty()) {
-            bridge.applyChanges(changed);
+    private void applyAndReload(EventCodeBridge.Plan plan, boolean finishAfter) {
+        if (plan.hasChanges()) {
+            bridge.apply(plan);
             setResult(RESULT_OK);
         }
-        String message = changed.isEmpty() ? "No event changes to save"
-                : "Saved " + changed.size() + (changed.size() == 1 ? " event" : " events") + " as blocks";
-        if (!unmatched.isEmpty()) {
-            message += "\nKept blocks unchanged for " + String.join(", ", unmatched) + " (its markers were removed)";
-        }
-        SketchwareUtil.toast(message, unmatched.isEmpty() ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG);
+        SketchwareUtil.toast(plan.summary());
         if (finishAfter) {
             finish();
         } else {
