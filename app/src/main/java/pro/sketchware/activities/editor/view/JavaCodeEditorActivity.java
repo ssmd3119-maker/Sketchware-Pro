@@ -40,6 +40,7 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
     private static final int MENU_REDO = 1;
     private static final int MENU_SAVE = 2;
     private static final int MENU_RELOAD_SCHEME = 3;
+    private static final int MENU_CONVERT_TO_BLOCKS = 4;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -108,7 +109,8 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         editor.setEditable(false);
 
         binding.noteCard.setVisibility(View.VISIBLE);
-        binding.note.setText("Each \"//#region sw:\" section is one event; saving turns it back into blocks."
+        binding.note.setText("Each \"//#region sw:\" section is one event; saving converts its code to real blocks"
+                + " (code without a matching block stays as \"add source directly\")."
                 + " Add your own methods, fields and imports anywhere, or in the javaEditor sections."
                 + " Rename or delete a More Block's method to rename or delete the More Block.");
         binding.close.setOnClickListener(v -> binding.noteCard.setVisibility(View.GONE));
@@ -173,6 +175,7 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         menu.add(Menu.NONE, MENU_SAVE, Menu.NONE, "Save")
                 .setIcon(AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_save))
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(Menu.NONE, MENU_CONVERT_TO_BLOCKS, Menu.NONE, "Convert code to blocks");
         menu.add(Menu.NONE, MENU_RELOAD_SCHEME, Menu.NONE, "Reload color schemes");
         return true;
     }
@@ -190,6 +193,9 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
                     SketchwareUtil.toast("No changes to save");
                 }
             }
+            case MENU_CONVERT_TO_BLOCKS -> {
+                if (generatedCode != null) save(false, true);
+            }
             case MENU_RELOAD_SCHEME -> EditorUtils.loadJavaConfig(editor);
             default -> {
                 return super.onOptionsItemSelected(item);
@@ -204,7 +210,15 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
      * @param finishAfter Close the editor once saved, otherwise reload the code from the new blocks.
      */
     private void save(boolean finishAfter) {
-        EventCodeBridge.Plan plan = bridge.plan(generatedCode, editor.getText().toString());
+        save(finishAfter, false);
+    }
+
+    /**
+     * @param convertAll Also convert events whose code didn't change but still use
+     *                   "add source directly" blocks.
+     */
+    private void save(boolean finishAfter, boolean convertAll) {
+        EventCodeBridge.Plan plan = bridge.plan(generatedCode, editor.getText().toString(), convertAll);
 
         ArrayList<String> warnings = new ArrayList<>();
         if (!plan.deletedMoreBlocks.isEmpty()) {
@@ -235,16 +249,39 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
     }
 
     private void applyAndReload(EventCodeBridge.Plan plan, boolean finishAfter) {
-        if (plan.hasChanges()) {
-            bridge.apply(plan);
-            setResult(RESULT_OK);
+        if (!plan.hasChanges()) {
+            SketchwareUtil.toast(plan.summary());
+            if (finishAfter) finish();
+            return;
         }
-        SketchwareUtil.toast(plan.summary());
-        if (finishAfter) {
-            finish();
-        } else {
-            loadCode(editor.getCursor().getLeftLine());
-        }
+        int line = editor.getCursor().getLeftLine();
+        editor.setEditable(false);
+        k();
+        executor.execute(() -> {
+            Exception error = null;
+            try {
+                bridge.apply(plan, getApplicationContext());
+            } catch (Exception e) {
+                error = e;
+            }
+            Exception failure = error;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                h();
+                if (failure != null) {
+                    editor.setEditable(true);
+                    SketchwareUtil.toastError("Failed to save: " + failure);
+                    return;
+                }
+                setResult(RESULT_OK);
+                SketchwareUtil.toast(plan.summary());
+                if (finishAfter) {
+                    finish();
+                } else {
+                    loadCode(line);
+                }
+            });
+        });
     }
 
     private boolean isContentModified() {

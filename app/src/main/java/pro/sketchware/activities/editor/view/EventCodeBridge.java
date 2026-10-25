@@ -1,5 +1,6 @@
 package pro.sketchware.activities.editor.view;
 
+import android.content.Context;
 import android.util.Pair;
 
 import androidx.annotation.NonNull;
@@ -13,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -21,7 +23,15 @@ import java.util.regex.Pattern;
 import a.a.a.Jx;
 import a.a.a.eC;
 import a.a.a.jC;
+import a.a.a.kq;
+import a.a.a.xB;
 import a.a.a.yq;
+import dev.aldi.sayuti.block.ExtraBlockFile;
+import mod.hey.studios.editor.manage.block.ExtraBlockInfo;
+import mod.hey.studios.editor.manage.block.v2.BlockLoader;
+import mod.hey.studios.project.ProjectSettings;
+import mod.jbk.util.LogUtil;
+import pro.sketchware.utility.CustomVariableUtil;
 import mod.hey.studios.moreblock.ReturnMoreblockManager;
 
 /**
@@ -152,6 +162,14 @@ public class EventCodeBridge {
      * Works out how to store {@code edited}, given the {@code generated} code it started from.
      */
     public Plan plan(String generated, String edited) {
+        return plan(generated, edited, false);
+    }
+
+    /**
+     * @param convertUnchanged Also convert events whose code didn't change but that contain
+     *                         "add source directly" blocks, e.g. from saving with an older version.
+     */
+    public Plan plan(String generated, String edited, boolean convertUnchanged) {
         Plan plan = new Plan();
         eC dataManager = jC.a(scId);
         String javaName = projectFile.getJavaName();
@@ -203,7 +221,8 @@ public class EventCodeBridge {
                 continue;
             }
             String newBody = normalizeBody(applyRenames(body, renames));
-            if (!newBody.equals(normalizeBody(applyRenames(entry.getValue(), renames)))) {
+            if (!newBody.equals(normalizeBody(applyRenames(entry.getValue(), renames)))
+                    || (convertUnchanged && !isJavaEditorKey(key) && hasSourceBlocks(dataManager, javaName, key))) {
                 plan.sections.put(key, newBody);
             }
         }
@@ -227,11 +246,34 @@ public class EventCodeBridge {
         return plan;
     }
 
+    private static boolean hasSourceBlocks(eC dataManager, String javaName, String key) {
+        ArrayList<BlockBean> blocks = dataManager.a(javaName, key);
+        if (blocks == null) return false;
+        for (BlockBean block : blocks) {
+            if (block.opCode != null && (block.opCode.equals(ASD_OPCODE) || block.opCode.startsWith("asd"))) return true;
+        }
+        return false;
+    }
+
     /**
      * Stores a {@link Plan} in the project's blocks. Changes are made in memory, like the Logic editor's;
      * the Design screen saves them with the project.
+     * <p>
+     * Event code is converted to real blocks where possible, see {@link JavaToBlocks}. This can take a
+     * moment for large code, so call it off the main thread.
      */
-    public void apply(Plan plan) {
+    public void apply(Plan plan, Context context) {
+        JavaToBlocks converter = null;
+        for (String key : plan.sections.keySet()) {
+            if (!isJavaEditorKey(key)) {
+                converter = createConverter(context);
+                break;
+            }
+        }
+        apply(plan, converter);
+    }
+
+    void apply(Plan plan, @Nullable JavaToBlocks converter) {
         eC dataManager = jC.a(scId);
         String javaName = projectFile.getJavaName();
         boolean isFragment = projectFile.fileName.contains("_fragment");
@@ -249,7 +291,13 @@ public class EventCodeBridge {
                 String key = keyRenames.containsKey(entry.getKey()) ? keyRenames.get(entry.getKey()) : entry.getKey();
                 String code = isFragment ? undoFragmentRewrites(entry.getValue()) : entry.getValue();
                 ArrayList<BlockBean> newBlocks = new ArrayList<>();
-                if (!code.isEmpty()) newBlocks.add(createAsdBlock("10", code));
+                if (!code.isEmpty()) {
+                    if (converter != null && !isJavaEditorKey(key)) {
+                        newBlocks = convertToBlocks(converter, dataManager, javaName, key, code);
+                    } else {
+                        newBlocks.add(createAsdBlock("10", code));
+                    }
+                }
                 if (newBlocks.isEmpty() && isJavaEditorKey(key)) {
                     blocks.remove(key);
                 } else {
@@ -261,6 +309,136 @@ public class EventCodeBridge {
                 dataManager.n(javaName, moreBlock);
             }
         }
+    }
+
+    private static ArrayList<BlockBean> convertToBlocks(JavaToBlocks converter, eC dataManager, String javaName,
+                                                        String key, String code) {
+        List<JavaToBlocks.Reporter> arguments = new ArrayList<>();
+        if (key.endsWith(MORE_BLOCK_SUFFIX)) {
+            String name = key.substring(0, key.length() - MORE_BLOCK_SUFFIX.length());
+            ArrayList<Pair<String, String>> moreBlocks = dataManager.i(javaName);
+            if (moreBlocks != null) {
+                for (Pair<String, String> moreBlock : moreBlocks) {
+                    if (moreBlock.first.equals(name)) arguments = JavaToBlocks.moreBlockArguments(moreBlock.second);
+                }
+            }
+        }
+        try {
+            ArrayList<BlockBean> blocks = converter.convert(code, arguments);
+            if (!blocks.isEmpty()) return blocks;
+        } catch (RuntimeException e) {
+            LogUtil.e("EventCodeBridge", "Failed to convert " + key + " to blocks", e);
+        }
+        ArrayList<BlockBean> fallback = new ArrayList<>();
+        fallback.add(createAsdBlock("10", code));
+        return fallback;
+    }
+
+    /**
+     * Creates a converter knowing every block of the palettes, Custom Blocks, this activity's More Blocks
+     * and its variables and lists.
+     */
+    private JavaToBlocks createConverter(Context context) {
+        eC dataManager = jC.a(scId);
+        String javaName = projectFile.getJavaName();
+        yq workspace = new yq(context, scId);
+        workspace.a(jC.c(scId), jC.b(scId), dataManager);
+        boolean viewBinding = new ProjectSettings(scId)
+                .getValue(ProjectSettings.SETTING_ENABLE_VIEWBINDING, "false").equals("true");
+
+        LinkedHashMap<String, JavaToBlocks.BlockDef> defs = new LinkedHashMap<>();
+        for (Map.Entry<String, String> block : BuiltInBlockTypes.TYPES.entrySet()) {
+            String opCode = block.getKey();
+            String spec = paletteSpec(context, opCode);
+            boolean core = spec != null;
+            if (spec == null) spec = customBlockSpec(opCode);
+            if (spec != null) defs.put(opCode, new JavaToBlocks.BlockDef(opCode, block.getValue(), "", spec, core));
+        }
+        try {
+            for (HashMap<String, Object> block : ExtraBlockFile.getExtraBlockData()) {
+                Object name = block.get("name");
+                Object type = block.get("type");
+                Object spec = block.get("spec");
+                if (!(name instanceof String n) || !(type instanceof String t) || !(spec instanceof String sp)) continue;
+                Object typeName = block.get("typeName");
+                defs.putIfAbsent(n, new JavaToBlocks.BlockDef(n, t, typeName instanceof String tn ? tn : "", sp));
+            }
+        } catch (RuntimeException e) {
+            LogUtil.e("EventCodeBridge", "Failed to read Custom Blocks", e);
+        }
+        ArrayList<JavaToBlocks.BlockDef> allDefs = new ArrayList<>(defs.values());
+        ArrayList<String> moreBlockSpecs = new ArrayList<>();
+        ArrayList<Pair<String, String>> moreBlocks = dataManager.i(javaName);
+        if (moreBlocks != null) {
+            for (Pair<String, String> moreBlock : moreBlocks) moreBlockSpecs.add(moreBlock.second);
+        }
+        allDefs.addAll(JavaToBlocks.moreBlockDefs(moreBlockSpecs));
+
+        return new JavaToBlocks(projectFile.getActivityName(), workspace.N, viewBinding, allDefs,
+                variableReporters(dataManager, javaName), kq::a);
+    }
+
+    /**
+     * @return Spec of one of the original palette blocks, or {@code null}.
+     */
+    @Nullable
+    private static String paletteSpec(Context context, String opCode) {
+        try {
+            String spec = xB.b().a(context, opCode);
+            if (spec != null && !spec.isEmpty()) return spec;
+        } catch (RuntimeException ignored) {
+        }
+        return null;
+    }
+
+    /**
+     * @return Spec of a built-in or user Custom Block, or {@code null}.
+     */
+    @Nullable
+    private static String customBlockSpec(String opCode) {
+        ExtraBlockInfo info = BlockLoader.getBlockInfo(opCode);
+        return info.isMissing || info.getSpec().isEmpty() ? null : info.getSpec();
+    }
+
+    /**
+     * Variables and lists of an activity as {@code getVar} reporters, typed like the Logic editor's palette.
+     */
+    private static List<JavaToBlocks.Reporter> variableReporters(eC dataManager, String javaName) {
+        ArrayList<JavaToBlocks.Reporter> reporters = new ArrayList<>();
+        String[] types = {"b", "d", "s", "a"};
+        for (int type = 0; type < types.length; type++) {
+            ArrayList<String> names = dataManager.e(javaName, type);
+            if (names == null) continue;
+            for (String name : names) {
+                reporters.add(new JavaToBlocks.Reporter(name, new JavaToBlocks.BlockDef("getVar", types[type], "", name)));
+            }
+        }
+        ArrayList<String> custom = dataManager.e(javaName, 6);
+        if (custom != null) {
+            for (String variable : custom) {
+                String variableType = CustomVariableUtil.getVariableType(variable);
+                String name = CustomVariableUtil.getVariableName(variable);
+                if (variableType == null || name == null) continue;
+                String type = switch (variableType) {
+                    case "boolean", "Boolean" -> "b";
+                    case "String" -> "s";
+                    case "double", "Double", "int", "Integer", "float", "Float", "long", "Long",
+                         "short", "Short" -> "d";
+                    default -> "v";
+                };
+                reporters.add(new JavaToBlocks.Reporter(name, new JavaToBlocks.BlockDef("getVar", type, variableType, name)));
+            }
+        }
+        ArrayList<Pair<Integer, String>> lists = dataManager.j(javaName);
+        if (lists != null) {
+            for (Pair<Integer, String> list : lists) {
+                if (list.first >= 1 && list.first <= 3) {
+                    reporters.add(new JavaToBlocks.Reporter(list.second,
+                            new JavaToBlocks.BlockDef("getVar", "l", kq.a(list.first), list.second)));
+                }
+            }
+        }
+        return reporters;
     }
 
     /**
