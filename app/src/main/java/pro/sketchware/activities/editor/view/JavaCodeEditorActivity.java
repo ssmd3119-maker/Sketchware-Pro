@@ -155,8 +155,9 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
                     finish();
                     return;
                 }
-                generatedCode = result;
-                editor.setText(result);
+                // The generator writes \r\n; keep one line ending so unchanged code never counts as edited.
+                generatedCode = normalizeLineEndings(result);
+                editor.setText(generatedCode);
                 editor.setEditable(true);
                 int lastLine = editor.getText().getLineCount() - 1;
                 editor.setSelection(Math.min(line, lastLine), 0);
@@ -218,7 +219,7 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
      *                   "add source directly" blocks.
      */
     private void save(boolean finishAfter, boolean convertAll) {
-        EventCodeBridge.Plan plan = bridge.plan(generatedCode, editor.getText().toString(), convertAll);
+        EventCodeBridge.Plan plan = bridge.plan(generatedCode, editorText(), convertAll);
 
         ArrayList<String> warnings = new ArrayList<>();
         if (!plan.deletedMoreBlocks.isEmpty()) {
@@ -285,6 +286,14 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
     }
 
     private boolean isContentModified() {
-        return generatedCode != null && !generatedCode.equals(editor.getText().toString());
+        return generatedCode != null && !generatedCode.equals(editorText());
+    }
+
+    private String editorText() {
+        return normalizeLineEndings(editor.getText().toString());
+    }
+
+    private static String normalizeLineEndings(String text) {
+        return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 }

@@ -956,8 +956,10 @@ public class EventCodeBridge {
      */
     private static ArrayList<BlockBean> wrapWithMarkers(String key, @Nullable ArrayList<BlockBean> blocks) {
         ArrayList<BlockBean> wrapped = new ArrayList<>();
-        BlockBean begin = createAsdBlock(String.valueOf(MARKER_BEGIN_ID), BEGIN + key);
-        BlockBean end = createAsdBlock(String.valueOf(MARKER_END_ID), END + key);
+        // Some events place their code in the middle of a line; the newlines keep each marker on a line of
+        // its own, so it can't comment out generated code after it and is always found when saving.
+        BlockBean begin = createAsdBlock(String.valueOf(MARKER_BEGIN_ID), "\n" + BEGIN + key);
+        BlockBean end = createAsdBlock(String.valueOf(MARKER_END_ID), END + key + "\n");
         wrapped.add(begin);
 
         if (blocks == null || blocks.isEmpty()) {
