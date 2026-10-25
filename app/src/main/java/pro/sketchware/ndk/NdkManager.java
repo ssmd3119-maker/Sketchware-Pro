@@ -129,6 +129,7 @@ public final class NdkManager {
                     extractTar(tar, staging, listener);
                 }
             }
+            fixScriptInterpreters(staging);
             if (findNdkBuildIn(staging) == null) {
                 throw new IOException("This archive doesn't contain an ndk-build program, so it isn't an on-device NDK package.");
             }
@@ -162,6 +163,48 @@ public final class NdkManager {
         String name = archiveName.replaceAll("(?i)(\\.tar\\.gz|\\.tgz|\\.tar|\\.zip)$", "");
         name = name.replaceAll("[^a-zA-Z0-9._-]", "_");
         return name.isEmpty() ? "ndk" : name;
+    }
+
+    /**
+     * NDKs made for Linux or Termux start their scripts with {@code #!/bin/sh}, {@code #!/bin/bash} or
+     * {@code #!/usr/bin/env bash}, which don't exist on Android. Point those scripts at the system shell.
+     */
+    static void fixScriptInterpreters(File dir) throws IOException {
+        File[] children = dir.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            if (Files.isSymbolicLink(child.toPath())) continue;
+            if (child.isDirectory()) {
+                fixScriptInterpreters(child);
+            } else if (child.length() > 2 && child.length() < 1024 * 1024) {
+                fixScriptInterpreter(child);
+            }
+        }
+    }
+
+    private static void fixScriptInterpreter(File file) throws IOException {
+        byte[] content;
+        try (InputStream in = new FileInputStream(file)) {
+            byte[] start = new byte[2];
+            if (!readFully(in, start) || start[0] != '#' || start[1] != '!') return;
+        }
+        content = Files.readAllBytes(file.toPath());
+        int end = 0;
+        while (end < content.length && content[end] != '\n') end++;
+        String line = new String(content, 2, end - 2, StandardCharsets.UTF_8).trim();
+        String[] parts = line.split("\\s+");
+        String interpreter = parts[0];
+        if (interpreter.isEmpty() || new File(interpreter).exists()) return;
+        String program = interpreter.endsWith("/env") && parts.length > 1 ? parts[1] : interpreter.substring(interpreter.lastIndexOf('/') + 1);
+        if (!program.equals("sh") && !program.equals("bash") && !program.equals("dash")) return;
+
+        boolean executable = file.canExecute();
+        byte[] shebang = "#!/system/bin/sh".getBytes(StandardCharsets.UTF_8);
+        try (OutputStream out = new FileOutputStream(file)) {
+            out.write(shebang);
+            out.write(content, end, content.length - end);
+        }
+        if (executable) file.setExecutable(true, false);
     }
 
     // region Archives

@@ -106,6 +106,8 @@ public class NdkBuilder {
             command.add("APP_ABI=" + DEFAULT_ABIS);
             command.add("APP_PLATFORM=" + DEFAULT_PLATFORM);
         }
+        // make runs its commands with /bin/sh by default, which doesn't exist on Android.
+        command.add("SHELL=/system/bin/sh");
         command.add("NDK_OUT=" + objs.getAbsolutePath());
         command.add("NDK_LIBS_OUT=" + libs.getAbsolutePath());
         command.add("-j" + Math.max(1, Runtime.getRuntime().availableProcessors()));

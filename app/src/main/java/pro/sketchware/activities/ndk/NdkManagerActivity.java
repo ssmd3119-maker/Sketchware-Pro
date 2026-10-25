@@ -98,6 +98,12 @@ public class NdkManagerActivity extends BaseAppCompatActivity {
         options.setTitle("Select an NDK package");
         options.setExtensions(new String[]{"gz", "tgz", "tar", "zip"});
         FilePickerCallback callback = new FilePickerCallback() {
+            // Single selection reports the file here, not through onFilesSelected().
+            @Override
+            public void onFileSelected(@NotNull File file) {
+                install(file);
+            }
+
             @Override
             public void onFilesSelected(@NotNull List<? extends File> files) {
                 if (!files.isEmpty()) install(files.get(0));
