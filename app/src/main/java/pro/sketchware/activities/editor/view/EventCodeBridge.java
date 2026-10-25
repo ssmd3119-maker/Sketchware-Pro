@@ -78,7 +78,7 @@ public class EventCodeBridge {
     private static final Pattern LEADING_ANNOTATIONS = Pattern.compile("^(\\s*@\\w+(\\([^)]*\\))?\\s*)+");
     /** {@code id.setOn...Listener(new Type() { one method });} */
     private static final Pattern LISTENER = Pattern.compile(
-            "(\\w+)\\.setOn\\w+Listener\\(\\s*new\\s+[\\w.<>?]+\\s*\\(\\s*\\)\\s*\\{(.*)}\\s*\\)\\s*;", Pattern.DOTALL);
+            "(\\w+)\\.setOn\\w+Listener\\(\\s*new\\s+[\\w.<>?]+\\s*\\(\\s*\\)\\s*\\{(.*)\\}\\s*\\)\\s*;", Pattern.DOTALL);
     /** Activity events a lifecycle method can become; the others are part of the generated structure. */
     private static final Set<String> ACTIVITY_EVENT_NAMES = Set.of(
             "onBackPressed", "onPostCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy");
