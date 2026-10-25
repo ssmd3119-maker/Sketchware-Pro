@@ -12,6 +12,7 @@ import com.besome.sketch.beans.ProjectFileBean;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -66,6 +67,17 @@ public class EventCodeBridge {
             "\\b_([A-Za-z_$][\\w$]*)\\s*\\([^()]*\\)\\s*\\{\\s*\\z");
     private static final Pattern JAVA_IDENTIFIER = Pattern.compile("[A-Za-z_$][\\w$]*");
     private static final String MORE_BLOCK_SUFFIX = "_moreBlock";
+    /** Header of a method that can be a More Block: return type, name without "_", parameters. */
+    private static final Pattern MORE_BLOCK_METHOD = Pattern.compile(
+            "(?:(?:public|private|protected|static|final|synchronized)\\s+)*([\\w$<>,\\s]+?)\\s+_([A-Za-z$][\\w$]*)\\s*\\(([^()]*)\\)\\s*\\{");
+    private static final Pattern METHOD_PARAMETER = Pattern.compile("(?:final\\s+)?([\\w$<>,\\s]+?)\\s+([A-Za-z_$][\\w$]*)");
+    /** Java parameter types More Blocks support, to their spec. */
+    private static final Map<String, String> MORE_BLOCK_PARAM_TYPES = Map.ofEntries(
+            Map.entry("String", "%s"), Map.entry("double", "%d"), Map.entry("boolean", "%b"),
+            Map.entry("HashMap<String,Object>", "%m.varMap"), Map.entry("ArrayList<Double>", "%m.listInt"),
+            Map.entry("ArrayList<String>", "%m.listStr"), Map.entry("ArrayList<HashMap<String,Object>>", "%m.listMap"),
+            Map.entry("View", "%m.view"), Map.entry("TextView", "%m.textview"), Map.entry("EditText", "%m.edittext"),
+            Map.entry("ImageView", "%m.imageview"), Map.entry("Intent", "%m.intent"), Map.entry("Calendar", "%m.calendar"));
     private static final Pattern PLAIN_IMPORT = Pattern.compile("import\\s+([\\w.]+(?:\\.\\*)?)\\s*;");
 
     private static final String ASD_SPEC = "add source directly %s.inputOnly";
@@ -144,24 +156,29 @@ public class EventCodeBridge {
         final ArrayList<Pair<Integer, String>> removedVariables = new ArrayList<>();
         /** Custom variables whose declaration changed, to their new declaration. */
         final LinkedHashMap<Pair<Integer, String>, String> changedVariables = new LinkedHashMap<>();
+        /** New methods named {@code _name}, stored as More Blocks. */
+        final ArrayList<NewMoreBlock> addedMoreBlocks = new ArrayList<>();
 
         public boolean hasChanges() {
             return !sections.isEmpty() || !renamedMoreBlocks.isEmpty() || !deletedMoreBlocks.isEmpty()
                     || !addedVariables.isEmpty() || !addedImports.isEmpty() || !removedVariables.isEmpty()
-                    || !changedVariables.isEmpty();
+                    || !changedVariables.isEmpty() || !addedMoreBlocks.isEmpty();
         }
 
         public String summary() {
             ArrayList<String> parts = new ArrayList<>();
             int events = 0;
+            Set<String> newMoreBlockKeys = new HashSet<>();
+            for (NewMoreBlock moreBlock : addedMoreBlocks) newMoreBlockKeys.add(moreBlock.name() + MORE_BLOCK_SUFFIX);
             for (String key : sections.keySet()) {
-                if (!isJavaEditorKey(key)) events++;
+                if (!isJavaEditorKey(key) && !newMoreBlockKeys.contains(key)) events++;
             }
             if (events > 0) parts.add(events + (events == 1 ? " event" : " events") + " saved as blocks");
             if (sections.containsKey(Jx.JAVA_EDITOR_MEMBERS_KEY) || sections.containsKey(Jx.JAVA_EDITOR_IMPORTS_KEY)) {
                 parts.add("custom code saved");
             }
             if (!renamedMoreBlocks.isEmpty()) parts.add(renamedMoreBlocks.size() + " More Block(s) renamed");
+            if (!addedMoreBlocks.isEmpty()) parts.add(addedMoreBlocks.size() + " More Block(s) added");
             if (!deletedMoreBlocks.isEmpty()) parts.add(deletedMoreBlocks.size() + " More Block(s) deleted");
             if (!addedVariables.isEmpty()) parts.add(addedVariables.size() + " variable(s) added");
             if (!changedVariables.isEmpty()) parts.add(changedVariables.size() + " variable(s) changed");
@@ -171,6 +188,16 @@ public class EventCodeBridge {
             String summary = String.join(", ", parts);
             return Character.toUpperCase(summary.charAt(0)) + summary.substring(1);
         }
+    }
+
+    /**
+     * A More Block to create from a method typed in the editor.
+     *
+     * @param name As stored, with the return type, e.g. {@code calc[double]}.
+     * @param spec As stored, e.g. {@code calc[double] %d.a %d.b}.
+     * @param body The method's code, with its parameters renamed to {@code _name} like More Blocks name them.
+     */
+    record NewMoreBlock(String name, String spec, String body) {
     }
 
     /**
@@ -263,7 +290,14 @@ public class EventCodeBridge {
         }
         String membersBody = joinBodies(currentBody(Jx.JAVA_EDITOR_MEMBERS_KEY, plan, generatedSections, editedSections),
                 members.toString());
-        String remainingMembers = extractFields(membersBody, plan);
+        Set<String> existingMoreBlocks = new HashSet<>();
+        if (moreBlocks != null) {
+            for (Pair<String, String> moreBlock : moreBlocks) {
+                existingMoreBlocks.add(ReturnMoreblockManager.getMbName(moreBlock.first));
+            }
+        }
+        existingMoreBlocks.addAll(renames.values());
+        String remainingMembers = extractFields(membersBody, plan, existingMoreBlocks);
         if (!remainingMembers.equals(normalizeBody(currentBody(Jx.JAVA_EDITOR_MEMBERS_KEY, null, generatedSections, editedSections)))) {
             plan.sections.put(Jx.JAVA_EDITOR_MEMBERS_KEY, remainingMembers);
         }
@@ -289,24 +323,120 @@ public class EventCodeBridge {
     }
 
     /**
-     * Moves single field declarations to {@link Plan#addedVariables}.
+     * Moves single field declarations to {@link Plan#addedVariables} and {@code _name} methods to
+     * {@link Plan#addedMoreBlocks}.
      *
      * @return The members that have to stay in the javaEditor section, e.g. methods.
      */
-    private static String extractFields(String body, Plan plan) {
+    private static String extractFields(String body, Plan plan, Set<String> existingMoreBlocks) {
         if (body.isEmpty()) return "";
         Outline outline = outline("class C {\n" + body + "\n}");
         StringBuilder remaining = new StringBuilder();
         for (Map.Entry<String, String> member : outline.members.entrySet()) {
             String raw = outline.rawMembers.get(member.getKey());
             String declaration = fieldDeclaration(member.getValue());
+            NewMoreBlock moreBlock = declaration == null ? moreBlockOf(raw, existingMoreBlocks, plan) : null;
             if (declaration != null) {
                 if (!plan.addedVariables.contains(declaration)) plan.addedVariables.add(declaration);
+            } else if (moreBlock != null) {
+                plan.addedMoreBlocks.add(moreBlock);
             } else {
                 remaining.append(raw).append("\n\n");
             }
         }
         return normalizeBody(remaining.toString());
+    }
+
+    /**
+     * Turns a method named {@code _name} into a More Block, if More Blocks support its return type and
+     * parameter types.
+     */
+    @Nullable
+    private static NewMoreBlock moreBlockOf(String method, Set<String> existingMoreBlocks, Plan plan) {
+        Matcher header = MORE_BLOCK_METHOD.matcher(method);
+        if (!header.lookingAt()) return null;
+        String name = header.group(2);
+        if (existingMoreBlocks.contains(name)) return null;
+        for (NewMoreBlock added : plan.addedMoreBlocks) {
+            if (ReturnMoreblockManager.getMbName(added.name).equals(name)) return null;
+        }
+        String returnType = collapse(header.group(1));
+        String storedType = switch (returnType) {
+            case "void" -> "";
+            case "String", "double", "boolean" -> returnType;
+            case "HashMap<String, Object>", "HashMap<String,Object>" -> "a|Map";
+            case "ArrayList<String>" -> "l|List String";
+            case "ArrayList<HashMap<String, Object>>", "ArrayList<HashMap<String,Object>>" -> "l|List Map";
+            case "View" -> "v|View";
+            default -> null;
+        };
+        if (storedType == null) return null;
+        String storedName = storedType.isEmpty() ? name : name + "[" + storedType + "]";
+
+        StringBuilder spec = new StringBuilder(storedName);
+        HashMap<String, String> paramRenames = new HashMap<>();
+        String params = header.group(3).trim();
+        if (!params.isEmpty()) {
+            for (String param : splitTopLevel(params)) {
+                Matcher matcher = METHOD_PARAMETER.matcher(param.trim());
+                if (!matcher.matches()) return null;
+                String paramSpec = MORE_BLOCK_PARAM_TYPES.get(collapse(matcher.group(1)).replace(", ", ","));
+                if (paramSpec == null) return null;
+                String paramName = matcher.group(2);
+                String specName = paramName.startsWith("_") ? paramName.substring(1) : paramName;
+                if (!JAVA_IDENTIFIER.matcher(specName).matches()) return null;
+                spec.append(' ').append(paramSpec).append('.').append(specName);
+                if (!paramName.startsWith("_")) paramRenames.put(paramName, "_" + specName);
+            }
+        }
+
+        int open = header.end() - 1;
+        int close = findClosing(method, open, '{', '}');
+        if (close < 0) return null;
+        String body = method.substring(open + 1, close);
+        if (!paramRenames.isEmpty()) body = renameIdentifiers(body, paramRenames);
+        return new NewMoreBlock(storedName, spec.toString(), normalizeBody(body));
+    }
+
+    /**
+     * Splits a parameter list at commas outside of generics.
+     */
+    private static List<String> splitTopLevel(String params) {
+        ArrayList<String> parts = new ArrayList<>();
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < params.length(); i++) {
+            char c = params.charAt(i);
+            if (c == '<') depth++;
+            else if (c == '>') depth--;
+            else if (c == ',' && depth == 0) {
+                parts.add(params.substring(start, i));
+                start = i + 1;
+            }
+        }
+        parts.add(params.substring(start));
+        return parts;
+    }
+
+    /**
+     * Renames identifiers in code, leaving member accesses ({@code x.name}), strings and comments alone.
+     */
+    private static String renameIdentifiers(String code, Map<String, String> renames) {
+        StringBuilder sb = new StringBuilder();
+        int last = 0;
+        String previous = null;
+        for (JavaToBlocks.Token token : JavaToBlocks.tokenize(code)) {
+            if (!token.comment) {
+                String replacement = renames.get(token.text);
+                if (replacement != null && !".".equals(previous)) {
+                    sb.append(code, last, token.start).append(replacement);
+                    last = token.end;
+                }
+                previous = token.text;
+            }
+        }
+        sb.append(code.substring(last));
+        return sb.toString();
     }
 
     /**
@@ -359,12 +489,22 @@ public class EventCodeBridge {
      * moment for large code, so call it off the main thread.
      */
     public void apply(Plan plan, Context context) {
-        JavaToBlocks converter = null;
-        for (String key : plan.sections.keySet()) {
-            if (!isJavaEditorKey(key)) {
-                converter = createConverter(context);
-                break;
+        eC dataManager = jC.a(scId);
+        String javaName = projectFile.getJavaName();
+        synchronized (dataManager) {
+            // Add new More Blocks first so the converter knows them, e.g. for calls to them.
+            for (NewMoreBlock moreBlock : plan.addedMoreBlocks) {
+                dataManager.a(javaName, moreBlock.name(), moreBlock.spec());
             }
+        }
+        JavaToBlocks converter = null;
+        boolean convertsCode = !plan.addedMoreBlocks.isEmpty();
+        for (String key : plan.sections.keySet()) {
+            if (!isJavaEditorKey(key)) convertsCode = true;
+        }
+        if (convertsCode) converter = createConverter(context);
+        for (NewMoreBlock moreBlock : plan.addedMoreBlocks) {
+            plan.sections.put(moreBlock.name() + MORE_BLOCK_SUFFIX, moreBlock.body());
         }
         apply(plan, converter);
     }
