@@ -17,6 +17,30 @@
       "name": "xml",
       "scopeName": "text.xml",
       "languageConfiguration": "textmate/xml/language-configuration.json"
+    },
+    {
+      "grammar": "textmate/c/syntaxes/c.tmLanguage.json",
+      "name": "c",
+      "scopeName": "source.c",
+      "languageConfiguration": "textmate/c/language-configuration.json"
+    },
+    {
+      "grammar": "textmate/cpp/syntaxes/cpp.tmLanguage.json",
+      "name": "cpp",
+      "scopeName": "source.cpp",
+      "languageConfiguration": "textmate/cpp/language-configuration.json"
+    },
+    {
+      "grammar": "textmate/cpp/syntaxes/cpp.embedded.macro.tmLanguage.json",
+      "name": "cpp-macro",
+      "scopeName": "source.cpp.embedded.macro",
+      "languageConfiguration": "textmate/cpp/language-configuration.json"
+    },
+    {
+      "grammar": "textmate/makefile/syntaxes/make.tmLanguage.json",
+      "name": "makefile",
+      "scopeName": "source.makefile",
+      "languageConfiguration": "textmate/makefile/language-configuration.json"
     }
   ]
 }

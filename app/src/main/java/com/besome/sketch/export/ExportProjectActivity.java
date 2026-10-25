@@ -56,6 +56,7 @@ import mod.jbk.util.TestkeySignBridge;
 import pro.sketchware.R;
 import pro.sketchware.databinding.ExportProjectBinding;
 import pro.sketchware.utility.AnalyticsHelper;
+import pro.sketchware.ndk.NdkBuilder;
 import pro.sketchware.utility.FilePathUtil;
 import pro.sketchware.utility.FileUtil;
 import pro.sketchware.utility.SketchwareUtil;
@@ -233,6 +234,10 @@ public class ExportProjectActivity extends BaseAppCompatActivity {
             File pathJni = new File(util.getPathJni(sc_id));
             if (new File(pathJni, "Android.mk").isFile()) {
                 FileUtil.copyDirectory(pathJni, new File(project_metadata.generatedFilesPath, "jni"));
+                // Gradle builds these from jni/ itself; a copy in jniLibs would be a duplicate.
+                for (String library : new NdkBuilder(getApplicationContext(), sc_id).getCopiedLibraries()) {
+                    new File(new File(project_metadata.generatedFilesPath, "jniLibs"), library).delete();
+                }
             }
 
             ArrayList<String> toCompress = new ArrayList<>();

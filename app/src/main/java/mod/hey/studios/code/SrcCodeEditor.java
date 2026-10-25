@@ -322,6 +322,18 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
                 binding.editor.setColorScheme(CodeEditorColorSchemes.loadTextMateColorScheme(CodeEditorColorSchemes.THEME_GITHUB));
             }
             languageId = 2;
+        } else if (title.endsWith(".c") || title.endsWith(".h") || title.endsWith(".cpp") || title.endsWith(".cc")
+                || title.endsWith(".cxx") || title.endsWith(".hpp") || title.endsWith(".hh") || title.endsWith(".mk")) {
+            String scope = title.endsWith(".mk") ? CodeEditorLanguages.SCOPE_NAME_MAKEFILE
+                    : title.endsWith(".c") || title.endsWith(".h") ? CodeEditorLanguages.SCOPE_NAME_C
+                    : CodeEditorLanguages.SCOPE_NAME_CPP;
+            binding.editor.setEditorLanguage(CodeEditorLanguages.loadTextMateLanguage(scope));
+            if (ThemeUtils.isDarkThemeEnabled(getApplicationContext())) {
+                binding.editor.setColorScheme(CodeEditorColorSchemes.loadTextMateColorScheme(CodeEditorColorSchemes.THEME_DRACULA));
+            } else {
+                binding.editor.setColorScheme(CodeEditorColorSchemes.loadTextMateColorScheme(CodeEditorColorSchemes.THEME_GITHUB));
+            }
+            languageId = -1;
         }
 
         loadCESettings(this, binding.editor, "act", true);

@@ -235,7 +235,6 @@ public class JniSourcesActivity extends BaseAppCompatActivity {
         Intent intent = new Intent(this, SrcCodeEditor.class);
         intent.putExtra("title", file.getName());
         intent.putExtra("content", file.getAbsolutePath());
-        intent.putExtra("xml", "");
         startActivity(intent);
     }
 

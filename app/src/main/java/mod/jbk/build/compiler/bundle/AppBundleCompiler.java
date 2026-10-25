@@ -174,12 +174,9 @@ public class AppBundleCompiler {
                 moduleMain.flush();
             }
 
-            /* Native libraries: imported ones and ones built with the NDK */
+            /* Native libraries, including ones built with the NDK (copied there by the NDK build) */
             var nativeLibraryDirectories = new ArrayList<File>();
             nativeLibraryDirectories.add(new File(new FilePathUtil().getPathNativelibs(builder.yq.sc_id)));
-            if (builder.getNdkLibrariesDirectory() != null) {
-                nativeLibraryDirectories.add(builder.getNdkLibrariesDirectory());
-            }
             var addedNativeLibraries = new HashSet<String>();
 
             for (var nativeLibrariesDirectory : nativeLibraryDirectories) {

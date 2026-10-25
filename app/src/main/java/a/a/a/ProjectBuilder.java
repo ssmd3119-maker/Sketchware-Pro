@@ -95,8 +95,6 @@ public class ProjectBuilder {
     public ProjectSettings settings;
     private BuildProgressReceiver progressReceiver;
     @Nullable
-    private File ndkLibrariesDirectory;
-    @Nullable
     private volatile NdkBuilder activeNdkBuilder;
     private boolean buildAppBundle = false;
     private ArrayList<File> dexesToAddButNotMerge = new ArrayList<>();
@@ -482,8 +480,8 @@ public class ProjectBuilder {
     }
 
     /**
-     * Builds the project's C/C++ sources with the installed NDK. Their libraries are then packaged by
-     * {@link #buildApk()} and app bundles, see {@link #getNdkLibrariesDirectory()}.
+     * Builds the project's C/C++ sources with the installed NDK. The libraries are copied into the project's
+     * native libraries, which {@link #buildApk()} and app bundles package.
      *
      * @throws zy With ndk-build's output if the NDK is missing or the build fails.
      */
@@ -494,28 +492,10 @@ public class ProjectBuilder {
         try {
             String output = ndkBuilder.build(null);
             LogUtil.d(TAG, "ndk-build output: " + output);
-            ndkLibrariesDirectory = ndkBuilder.getLibrariesDirectory();
         } catch (NdkBuilder.NdkBuildException e) {
             throw new zy(e.getMessage());
         } finally {
             activeNdkBuilder = null;
-        }
-
-        // The APK can't contain the same library twice.
-        File imported = new File(fpu.getPathNativelibs(yq.sc_id));
-        File[] abis = ndkLibrariesDirectory.listFiles(File::isDirectory);
-        if (abis != null) {
-            for (File abi : abis) {
-                String[] libraries = abi.list();
-                if (libraries == null) continue;
-                for (String library : libraries) {
-                    if (new File(new File(imported, abi.getName()), library).exists()) {
-                        throw new zy(abi.getName() + "/" + library + " is built from the project's C/C++ code and also"
-                                + " imported in the Native Library Manager. Remove one of them, or rename the NDK"
-                                + " module (LOCAL_MODULE in Android.mk).");
-                    }
-                }
-            }
         }
     }
 
@@ -525,14 +505,6 @@ public class ProjectBuilder {
     public void cancelNativeBuild() {
         NdkBuilder running = activeNdkBuilder;
         if (running != null) running.cancel();
-    }
-
-    /**
-     * @return Libraries built by {@link #buildNativeCode()} ({@code <abi>/lib*.so}), or {@code null}.
-     */
-    @Nullable
-    public File getNdkLibrariesDirectory() {
-        return ndkLibrariesDirectory;
     }
 
     public void buildApk() throws By {
@@ -557,9 +529,6 @@ public class ProjectBuilder {
             }
 
             /* Add native libraries built with the NDK */
-            if (ndkLibrariesDirectory != null && ndkLibrariesDirectory.exists()) {
-                apkBuilder.addNativeLibraries(ndkLibrariesDirectory);
-            }
 
             /* Add Local libraries' native libraries */
             for (String nativeLibraryDirectory : mll.getNativeLibs()) {

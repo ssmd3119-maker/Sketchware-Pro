@@ -8,12 +8,16 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import pro.sketchware.utility.FilePathUtil;
 
@@ -21,7 +25,8 @@ import pro.sketchware.utility.FilePathUtil;
  * Builds a project's C/C++ sources ({@code files/jni/Android.mk}) with the installed NDK's {@code ndk-build}.
  * <p>
  * Objects and libraries go to the app's internal storage ({@code files/ndk-out/<sc_id>/}), so later builds
- * only recompile what changed. The libraries ({@code libs/<abi>/lib*.so}) are packaged into the APK by the project builder.
+ * only recompile what changed. After a successful build the libraries ({@code <abi>/lib*.so}) are copied into the
+ * project's native libraries (Native Library Manager), from where builds package them like imported ones.
  */
 public class NdkBuilder {
 
@@ -147,7 +152,81 @@ public class NdkBuilder {
         if (exitCode != 0) {
             throw new NdkBuildException("NDK build failed (exit code " + exitCode + "):\n" + output);
         }
+        try {
+            copyToNativeLibraries(output, listener);
+        } catch (IOException e) {
+            throw new NdkBuildException("Built the libraries, but couldn't copy them to the Native Library Manager: "
+                    + e.getMessage() + "\n" + output);
+        }
         return output.toString();
+    }
+
+    /**
+     * @return The project's native libraries folder (Native Library Manager).
+     */
+    public File getNativeLibrariesDirectory() {
+        return new File(paths.getPathNativelibs(scId));
+    }
+
+    /**
+     * @return Libraries the last build copied into the native libraries folder, as {@code <abi>/lib*.so}.
+     */
+    public Set<String> getCopiedLibraries() {
+        Set<String> libraries = new LinkedHashSet<>();
+        File list = getCopiedLibrariesList();
+        if (list.isFile()) {
+            try {
+                for (String line : Files.readAllLines(list.toPath(), StandardCharsets.UTF_8)) {
+                    if (!line.trim().isEmpty()) libraries.add(line.trim());
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        return libraries;
+    }
+
+    private File getCopiedLibrariesList() {
+        return new File(getOutputDirectory(), "copied-libraries.txt");
+    }
+
+    /**
+     * Copies the built libraries into the native libraries folder, replacing files with the same name, and
+     * removes libraries an earlier build copied there that aren't built anymore (e.g. a removed module or ABI).
+     */
+    private void copyToNativeLibraries(StringBuilder output, @Nullable LogListener listener) throws IOException {
+        File nativeLibraries = getNativeLibrariesDirectory();
+        Set<String> built = new LinkedHashSet<>();
+        File[] abis = getLibrariesDirectory().listFiles(File::isDirectory);
+        if (abis != null) {
+            for (File abi : abis) {
+                File[] libraries = abi.listFiles((dir, name) -> name.endsWith(".so"));
+                if (libraries == null) continue;
+                for (File library : libraries) {
+                    File target = new File(new File(nativeLibraries, abi.getName()), library.getName());
+                    File parent = target.getParentFile();
+                    if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException("Can't create " + parent);
+                    Files.copy(library.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    built.add(abi.getName() + "/" + library.getName());
+                }
+            }
+        }
+
+        for (String old : getCopiedLibraries()) {
+            if (built.contains(old)) continue;
+            File stale = new File(nativeLibraries, old);
+            if (stale.delete()) log(output, listener, "Removed " + old + " from the Native Library Manager");
+        }
+        for (String library : built) {
+            log(output, listener, "Copied " + library + " to the Native Library Manager");
+        }
+        File list = getCopiedLibrariesList();
+        list.getParentFile().mkdirs();
+        Files.write(list.toPath(), String.join("\n", built).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void log(StringBuilder output, @Nullable LogListener listener, String line) {
+        output.append(line).append('\n');
+        if (listener != null) listener.onLine(line);
     }
 
     /**
@@ -163,7 +242,9 @@ public class NdkBuilder {
      * Deletes the build output, so the next build compiles everything.
      */
     public void clean() throws IOException {
-        NdkManager.deleteRecursively(getOutputDirectory());
+        // Keeps the list of copied libraries, so the next build can still remove stale ones.
+        NdkManager.deleteRecursively(getObjectsDirectory());
+        NdkManager.deleteRecursively(getLibrariesDirectory());
     }
 
     /**
