@@ -865,6 +865,21 @@ public class JavaToBlocks {
     }
 
     /**
+     * Splits code into its top-level statements and comments.
+     *
+     * @return Character ranges {start, end} of each statement.
+     */
+    static List<int[]> statementRanges(String code) {
+        Conversion scanner = new JavaToBlocks(null, null, false, Collections.emptyList(),
+                Collections.emptyList(), null).new Conversion(code, Collections.emptyList(), false);
+        ArrayList<int[]> ranges = new ArrayList<>();
+        for (Range range : scanner.splitStatements(0, scanner.tokens.size())) {
+            ranges.add(new int[]{scanner.tokens.get(range.start).start, scanner.tokens.get(range.end - 1).end});
+        }
+        return ranges;
+    }
+
+    /**
      * Reverses {@code Fx#escapeString}: {@code \"} and {@code \\} are unescaped, {@code \n} and {@code \t}
      * stay as written since the generator keeps them.
      */

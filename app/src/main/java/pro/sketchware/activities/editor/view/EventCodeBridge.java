@@ -9,6 +9,7 @@ import androidx.annotation.Nullable;
 import com.besome.sketch.beans.BlockBean;
 import com.besome.sketch.beans.EventBean;
 import com.besome.sketch.beans.ProjectFileBean;
+import com.besome.sketch.beans.ViewBean;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,9 +23,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import a.a.a.Jx;
+import a.a.a.Lx;
 import a.a.a.eC;
 import a.a.a.jC;
 import a.a.a.kq;
+import a.a.a.oq;
 import a.a.a.xB;
 import a.a.a.yq;
 import dev.aldi.sayuti.block.ExtraBlockFile;
@@ -71,6 +74,14 @@ public class EventCodeBridge {
     private static final Pattern MORE_BLOCK_METHOD = Pattern.compile(
             "(?:(?:public|private|protected|static|final|synchronized)\\s+)*([\\w$<>,\\s]+?)\\s+_([A-Za-z$][\\w$]*)\\s*\\(([^()]*)\\)\\s*\\{");
     private static final Pattern METHOD_PARAMETER = Pattern.compile("(?:final\\s+)?([\\w$<>,\\s]+?)\\s+([A-Za-z_$][\\w$]*)");
+    private static final String EVENT_BODY_MARKER = "__swEventBody__";
+    private static final Pattern LEADING_ANNOTATIONS = Pattern.compile("^(\\s*@\\w+(\\([^)]*\\))?\\s*)+");
+    /** {@code id.setOn...Listener(new Type() { one method });} */
+    private static final Pattern LISTENER = Pattern.compile(
+            "(\\w+)\\.setOn\\w+Listener\\(\\s*new\\s+[\\w.<>?]+\\s*\\(\\s*\\)\\s*\\{(.*)}\\s*\\)\\s*;", Pattern.DOTALL);
+    /** Activity events a lifecycle method can become; the others are part of the generated structure. */
+    private static final Set<String> ACTIVITY_EVENT_NAMES = Set.of(
+            "onBackPressed", "onPostCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy");
     /** Header of any method: return type, name, parameters. */
     private static final Pattern ORDINARY_METHOD = Pattern.compile(
             "(?:(?:public|private|protected|static|final|synchronized)\\s+)*([\\w$<>,\\s.\\[\\]]+?)\\s+([A-Za-z_$][\\w$]*)\\s*\\(([^()]*)\\)\\s*\\{");
@@ -166,11 +177,13 @@ public class EventCodeBridge {
         final LinkedHashMap<Pair<Integer, String>, String> changedVariables = new LinkedHashMap<>();
         /** New methods named {@code _name}, stored as More Blocks. */
         final ArrayList<NewMoreBlock> addedMoreBlocks = new ArrayList<>();
+        /** Activity lifecycle methods and widget listeners typed in the editor, stored as events. */
+        final ArrayList<NewEvent> addedEvents = new ArrayList<>();
 
         public boolean hasChanges() {
             return !sections.isEmpty() || !renamedMoreBlocks.isEmpty() || !deletedMoreBlocks.isEmpty()
                     || !addedVariables.isEmpty() || !addedImports.isEmpty() || !removedVariables.isEmpty()
-                    || !changedVariables.isEmpty() || !addedMoreBlocks.isEmpty();
+                    || !changedVariables.isEmpty() || !addedMoreBlocks.isEmpty() || !addedEvents.isEmpty();
         }
 
         public String summary() {
@@ -178,6 +191,7 @@ public class EventCodeBridge {
             int events = 0;
             Set<String> newMoreBlockKeys = new HashSet<>();
             for (NewMoreBlock moreBlock : addedMoreBlocks) newMoreBlockKeys.add(moreBlock.name() + MORE_BLOCK_SUFFIX);
+            for (NewEvent event : addedEvents) newMoreBlockKeys.add(event.key());
             for (String key : sections.keySet()) {
                 if (!isJavaEditorKey(key) && !newMoreBlockKeys.contains(key)) events++;
             }
@@ -186,6 +200,7 @@ public class EventCodeBridge {
                 parts.add("custom code saved");
             }
             if (!renamedMoreBlocks.isEmpty()) parts.add(renamedMoreBlocks.size() + " More Block(s) renamed");
+            if (!addedEvents.isEmpty()) parts.add(addedEvents.size() + " event(s) added");
             if (!addedMoreBlocks.isEmpty()) parts.add(addedMoreBlocks.size() + " More Block(s) added");
             if (!deletedMoreBlocks.isEmpty()) parts.add(deletedMoreBlocks.size() + " More Block(s) deleted");
             if (!addedVariables.isEmpty()) parts.add(addedVariables.size() + " variable(s) added");
@@ -206,6 +221,17 @@ public class EventCodeBridge {
      * @param body The method's code, with its parameters renamed to {@code _name} like More Blocks name them.
      */
     record NewMoreBlock(String name, String spec, String body) {
+    }
+
+    /**
+     * An event to create from a lifecycle method or listener typed in the editor.
+     *
+     * @param body The code inside the event, without the code the generator adds around it.
+     */
+    record NewEvent(int eventType, int targetType, String targetId, String eventName, String body) {
+        String key() {
+            return targetId + "_" + eventName;
+        }
     }
 
     /**
@@ -328,11 +354,147 @@ public class EventCodeBridge {
             }
         }
         existingMoreBlocks.addAll(renames.values());
-        String remainingMembers = extractFields(membersBody, plan, existingMoreBlocks);
+        Set<String> existingEvents = new HashSet<>();
+        ArrayList<EventBean> events = dataManager.g(javaName);
+        if (events != null) {
+            for (EventBean event : events) existingEvents.add(event.targetId + "_" + event.eventName);
+        }
+        String remainingMembers = extractFields(membersBody, plan, existingMoreBlocks, existingEvents);
         if (!remainingMembers.equals(normalizeBody(currentBody(Jx.JAVA_EDITOR_MEMBERS_KEY, null, generatedSections, editedSections)))) {
             plan.sections.put(Jx.JAVA_EDITOR_MEMBERS_KEY, remainingMembers);
         }
+
+        // Widget listeners typed in an event become that widget's events.
+        ArrayList<ViewBean> views = dataManager.d(projectFile.getXmlName());
+        if (views != null && !views.isEmpty()) {
+            for (Map.Entry<String, String> section : new ArrayList<>(plan.sections.entrySet())) {
+                if (isJavaEditorKey(section.getKey())) continue;
+                String remaining = extractListeners(section.getValue(), views, existingEvents, plan);
+                if (!remaining.equals(section.getValue())) plan.sections.put(section.getKey(), remaining);
+            }
+        }
         return plan;
+    }
+
+    /**
+     * Turns an Activity lifecycle method (e.g. {@code onResume}) into that Activity event, if the event
+     * doesn't exist yet and the method matches how the event is generated.
+     */
+    @Nullable
+    private static NewEvent activityEventOf(String method, Set<String> existingEvents, Plan plan) {
+        Matcher header = ORDINARY_METHOD.matcher(LEADING_ANNOTATIONS.matcher(method).replaceFirst(""));
+        if (!header.lookingAt()) return null;
+        String name = header.group(2);
+        if (!ACTIVITY_EVENT_NAMES.contains(name) || existingEvents.contains(name + "_" + name)) return null;
+        for (NewEvent added : plan.addedEvents) {
+            if (added.key().equals(name + "_" + name)) return null;
+        }
+        String body = eventBody(method, Lx.getEventCode(name, name, EVENT_BODY_MARKER));
+        return body == null ? null : new NewEvent(EventBean.EVENT_TYPE_ACTIVITY, 0, name, name, normalizeBody(body));
+    }
+
+    /**
+     * Moves statements like {@code button1.setOnClickListener(new View.OnClickListener() {...});} to new
+     * events of that widget.
+     *
+     * @return The code without those statements.
+     */
+    private static String extractListeners(String code, List<ViewBean> views, Set<String> existingEvents, Plan plan) {
+        StringBuilder remaining = new StringBuilder();
+        int last = 0;
+        for (int[] range : JavaToBlocks.statementRanges(code)) {
+            String statement = code.substring(range[0], range[1]);
+            NewEvent event = listenerEventOf(statement, views, existingEvents, plan);
+            if (event == null) continue;
+            plan.addedEvents.add(event);
+            remaining.append(code, last, range[0]);
+            last = range[1];
+        }
+        if (last == 0) return code;
+        remaining.append(code.substring(last));
+        return normalizeBody(remaining.toString());
+    }
+
+    @Nullable
+    private static NewEvent listenerEventOf(String statement, List<ViewBean> views, Set<String> existingEvents, Plan plan) {
+        Matcher listener = LISTENER.matcher(statement.trim());
+        if (!listener.matches()) return null;
+        String id = listener.group(1);
+        String method = listener.group(2).trim();
+        for (ViewBean view : views) {
+            if (!id.equals(view.id)) continue;
+            for (String eventName : oq.getEventsForClass(view.getClassInfo())) {
+                String key = id + "_" + eventName;
+                if (existingEvents.contains(key)) continue;
+                boolean taken = false;
+                for (NewEvent added : plan.addedEvents) taken |= added.key().equals(key);
+                if (taken) continue;
+                String body;
+                try {
+                    body = eventBody(method, Lx.getEventCode(id, eventName, EVENT_BODY_MARKER));
+                } catch (RuntimeException e) {
+                    continue;
+                }
+                if (body != null) {
+                    return new NewEvent(EventBean.EVENT_TYPE_VIEW, view.type, id, eventName, normalizeBody(body));
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Matches a method against the code the generator writes for an event, ignoring annotations and
+     * access modifiers before its return type.
+     *
+     * @param template The event's generated code with {@link #EVENT_BODY_MARKER} as its code.
+     * @return The code inside the method, or {@code null} if the method isn't that event.
+     */
+    @Nullable
+    static String eventBody(String method, String template) {
+        int marker = template.indexOf(EVENT_BODY_MARKER);
+        if (marker < 0) return null;
+        List<JavaToBlocks.Token> prefix = headerTokens(template.substring(0, marker));
+        List<JavaToBlocks.Token> suffix = codeTokens(template.substring(marker + EVENT_BODY_MARKER.length()));
+        List<JavaToBlocks.Token> tokens = headerTokens(method);
+        if (prefix.isEmpty() || tokens.size() < prefix.size() + suffix.size()) return null;
+        for (int i = 0; i < prefix.size(); i++) {
+            if (!prefix.get(i).text.equals(tokens.get(i).text)) return null;
+        }
+        int suffixStart = tokens.size() - suffix.size();
+        for (int i = 0; i < suffix.size(); i++) {
+            if (!suffix.get(i).text.equals(tokens.get(suffixStart + i).text)) return null;
+        }
+        int bodyStart = tokens.get(prefix.size() - 1).end;
+        int bodyEnd = suffixStart < tokens.size() ? tokens.get(suffixStart).start : method.length();
+        return bodyStart <= bodyEnd ? method.substring(bodyStart, bodyEnd) : null;
+    }
+
+    private static List<JavaToBlocks.Token> codeTokens(String code) {
+        ArrayList<JavaToBlocks.Token> tokens = new ArrayList<>();
+        for (JavaToBlocks.Token token : JavaToBlocks.tokenize(code)) {
+            if (!token.comment) tokens.add(token);
+        }
+        return tokens;
+    }
+
+    /**
+     * Code tokens without leading annotations and access modifiers.
+     */
+    private static List<JavaToBlocks.Token> headerTokens(String code) {
+        List<JavaToBlocks.Token> tokens = codeTokens(code);
+        int start = 0;
+        while (start < tokens.size()) {
+            String text = tokens.get(start).text;
+            if (text.equals("@") && start + 1 < tokens.size()) {
+                start += 2;
+            } else if (text.equals("public") || text.equals("protected") || text.equals("private")) {
+                start++;
+            } else {
+                break;
+            }
+        }
+        return tokens.subList(start, tokens.size());
     }
 
     /**
@@ -359,17 +521,22 @@ public class EventCodeBridge {
      *
      * @return The members that have to stay in the javaEditor section, e.g. methods.
      */
-    private static String extractFields(String body, Plan plan, Set<String> existingMoreBlocks) {
+    private static String extractFields(String body, Plan plan, Set<String> existingMoreBlocks,
+                                        Set<String> existingEvents) {
         if (body.isEmpty()) return "";
         Outline outline = outline("class C {\n" + body + "\n}");
         StringBuilder remaining = new StringBuilder();
         for (Map.Entry<String, String> member : outline.members.entrySet()) {
             String raw = outline.rawMembers.get(member.getKey());
             String declaration = fieldDeclaration(member.getValue());
-            NewMoreBlock moreBlock = declaration == null
+            NewEvent event = declaration == null
+                    ? activityEventOf(outline.codeMembers.get(member.getKey()), existingEvents, plan) : null;
+            NewMoreBlock moreBlock = declaration == null && event == null
                     ? moreBlockOf(outline.codeMembers.get(member.getKey()), existingMoreBlocks, plan) : null;
             if (declaration != null) {
                 if (!plan.addedVariables.contains(declaration)) plan.addedVariables.add(declaration);
+            } else if (event != null) {
+                plan.addedEvents.add(event);
             } else if (moreBlock != null) {
                 plan.addedMoreBlocks.add(moreBlock);
             } else {
@@ -587,15 +754,21 @@ public class EventCodeBridge {
             for (NewMoreBlock moreBlock : plan.addedMoreBlocks) {
                 dataManager.a(javaName, moreBlock.name(), moreBlock.spec());
             }
+            for (NewEvent event : plan.addedEvents) {
+                dataManager.a(javaName, new EventBean(event.eventType(), event.targetType(), event.targetId(), event.eventName()));
+            }
         }
         JavaToBlocks converter = null;
-        boolean convertsCode = !plan.addedMoreBlocks.isEmpty();
+        boolean convertsCode = !plan.addedMoreBlocks.isEmpty() || !plan.addedEvents.isEmpty();
         for (String key : plan.sections.keySet()) {
             if (!isJavaEditorKey(key)) convertsCode = true;
         }
         if (convertsCode) converter = createConverter(context);
         for (NewMoreBlock moreBlock : plan.addedMoreBlocks) {
             plan.sections.put(moreBlock.name() + MORE_BLOCK_SUFFIX, moreBlock.body());
+        }
+        for (NewEvent event : plan.addedEvents) {
+            plan.sections.put(event.key(), event.body());
         }
         apply(plan, converter);
     }
