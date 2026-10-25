@@ -66,6 +66,7 @@ public class EventCodeBridge {
             "\\b_([A-Za-z_$][\\w$]*)\\s*\\([^()]*\\)\\s*\\{\\s*\\z");
     private static final Pattern JAVA_IDENTIFIER = Pattern.compile("[A-Za-z_$][\\w$]*");
     private static final String MORE_BLOCK_SUFFIX = "_moreBlock";
+    private static final Pattern PLAIN_IMPORT = Pattern.compile("import\\s+([\\w.]+(?:\\.\\*)?)\\s*;");
 
     private static final String ASD_SPEC = "add source directly %s.inputOnly";
     private static final String ASD_OPCODE = "addSourceDirectly";
@@ -135,9 +136,19 @@ public class EventCodeBridge {
         int discardedChanges;
         int movedImports;
         int movedMembers;
+        /** New fields, stored as custom variables (declaration without ";"). */
+        final ArrayList<String> addedVariables = new ArrayList<>();
+        /** New imports, stored as project imports (e.g. "java.util.Random"). */
+        final ArrayList<String> addedImports = new ArrayList<>();
+        /** Variables (including imports) whose declaration was deleted. */
+        final ArrayList<Pair<Integer, String>> removedVariables = new ArrayList<>();
+        /** Custom variables whose declaration changed, to their new declaration. */
+        final LinkedHashMap<Pair<Integer, String>, String> changedVariables = new LinkedHashMap<>();
 
         public boolean hasChanges() {
-            return !sections.isEmpty() || !renamedMoreBlocks.isEmpty() || !deletedMoreBlocks.isEmpty();
+            return !sections.isEmpty() || !renamedMoreBlocks.isEmpty() || !deletedMoreBlocks.isEmpty()
+                    || !addedVariables.isEmpty() || !addedImports.isEmpty() || !removedVariables.isEmpty()
+                    || !changedVariables.isEmpty();
         }
 
         public String summary() {
@@ -152,6 +163,10 @@ public class EventCodeBridge {
             }
             if (!renamedMoreBlocks.isEmpty()) parts.add(renamedMoreBlocks.size() + " More Block(s) renamed");
             if (!deletedMoreBlocks.isEmpty()) parts.add(deletedMoreBlocks.size() + " More Block(s) deleted");
+            if (!addedVariables.isEmpty()) parts.add(addedVariables.size() + " variable(s) added");
+            if (!changedVariables.isEmpty()) parts.add(changedVariables.size() + " variable(s) changed");
+            if (!addedImports.isEmpty()) parts.add(addedImports.size() + " import(s) added");
+            if (!removedVariables.isEmpty()) parts.add(removedVariables.size() + " variable(s)/import(s) removed");
             if (parts.isEmpty()) return "No changes to save";
             String summary = String.join(", ", parts);
             return Character.toUpperCase(summary.charAt(0)) + summary.substring(1);
@@ -234,16 +249,97 @@ public class EventCodeBridge {
         }
         StringBuilder imports = new StringBuilder();
         StringBuilder members = new StringBuilder();
-        diffOutside(generatedOutside, applyRenames(edited, renames), plan, imports, members);
-        if (imports.length() > 0) {
-            plan.sections.put(Jx.JAVA_EDITOR_IMPORTS_KEY, joinBodies(
-                    currentBody(Jx.JAVA_EDITOR_IMPORTS_KEY, plan, generatedSections, editedSections), imports.toString()));
+        ArrayList<Pair<Integer, String>> variables = dataManager.k(javaName);
+        diffOutside(generatedOutside, applyRenames(edited, renames), plan, imports, members,
+                variables == null ? new ArrayList<>() : variables);
+
+        // Fields and imports become project variables and imports, like ones added in the Logic editor.
+        // This also moves simple fields and imports out of the javaEditor sections.
+        String importsBody = joinBodies(currentBody(Jx.JAVA_EDITOR_IMPORTS_KEY, plan, generatedSections, editedSections),
+                imports.toString());
+        String remainingImports = extractImports(importsBody, plan);
+        if (!remainingImports.equals(normalizeBody(currentBody(Jx.JAVA_EDITOR_IMPORTS_KEY, null, generatedSections, editedSections)))) {
+            plan.sections.put(Jx.JAVA_EDITOR_IMPORTS_KEY, remainingImports);
         }
-        if (members.length() > 0) {
-            plan.sections.put(Jx.JAVA_EDITOR_MEMBERS_KEY, joinBodies(
-                    currentBody(Jx.JAVA_EDITOR_MEMBERS_KEY, plan, generatedSections, editedSections), members.toString()));
+        String membersBody = joinBodies(currentBody(Jx.JAVA_EDITOR_MEMBERS_KEY, plan, generatedSections, editedSections),
+                members.toString());
+        String remainingMembers = extractFields(membersBody, plan);
+        if (!remainingMembers.equals(normalizeBody(currentBody(Jx.JAVA_EDITOR_MEMBERS_KEY, null, generatedSections, editedSections)))) {
+            plan.sections.put(Jx.JAVA_EDITOR_MEMBERS_KEY, remainingMembers);
         }
         return plan;
+    }
+
+    /**
+     * Moves plain imports to {@link Plan#addedImports}.
+     *
+     * @return The imports that have to stay in the javaEditor section, e.g. static imports.
+     */
+    private static String extractImports(String body, Plan plan) {
+        StringBuilder remaining = new StringBuilder();
+        for (String line : body.split("\n")) {
+            Matcher matcher = PLAIN_IMPORT.matcher(line.trim());
+            if (matcher.matches()) {
+                if (!plan.addedImports.contains(matcher.group(1))) plan.addedImports.add(matcher.group(1));
+            } else if (!line.trim().isEmpty()) {
+                remaining.append(line).append('\n');
+            }
+        }
+        return normalizeBody(remaining.toString());
+    }
+
+    /**
+     * Moves single field declarations to {@link Plan#addedVariables}.
+     *
+     * @return The members that have to stay in the javaEditor section, e.g. methods.
+     */
+    private static String extractFields(String body, Plan plan) {
+        if (body.isEmpty()) return "";
+        Outline outline = outline("class C {\n" + body + "\n}");
+        StringBuilder remaining = new StringBuilder();
+        for (Map.Entry<String, String> member : outline.members.entrySet()) {
+            String raw = outline.rawMembers.get(member.getKey());
+            String declaration = fieldDeclaration(member.getValue());
+            if (declaration != null) {
+                if (!plan.addedVariables.contains(declaration)) plan.addedVariables.add(declaration);
+            } else {
+                remaining.append(raw).append("\n\n");
+            }
+        }
+        return normalizeBody(remaining.toString());
+    }
+
+    /**
+     * @return {@code member} without its ";" if it declares exactly one field, as a custom variable stores
+     * it, e.g. {@code private TextView textview2}; otherwise {@code null}.
+     */
+    @Nullable
+    static String fieldDeclaration(String member) {
+        if (!member.endsWith(";") || member.startsWith("@") || member.contains("{") || member.contains("}")) {
+            return null;
+        }
+        String declaration = member.substring(0, member.length() - 1).trim();
+        int equals = declaration.indexOf('=');
+        String head = (equals < 0 ? declaration : declaration.substring(0, equals)).replaceAll("<[^<>]*>", "")
+                .replaceAll("<[^<>]*>", "");
+        if (head.contains(",") || head.contains("(")) return null;
+        String[] words = head.trim().split("\\s+");
+        if (words.length < 2) return null;
+        String name = words[words.length - 1].replace("[]", "");
+        if (!JAVA_IDENTIFIER.matcher(name).matches()) return null;
+        return CustomVariableUtil.getVariableName(declaration) != null ? declaration : null;
+    }
+
+    /**
+     * @return Name of the field a project variable declares.
+     */
+    @Nullable
+    private static String variableName(Pair<Integer, String> variable) {
+        return switch (variable.first) {
+            case 5, 6 -> CustomVariableUtil.getVariableName(variable.second);
+            case 9 -> null;
+            default -> variable.second;
+        };
     }
 
     private static boolean hasSourceBlocks(eC dataManager, String javaName, String key) {
@@ -307,6 +403,27 @@ public class EventCodeBridge {
 
             for (String moreBlock : plan.deletedMoreBlocks) {
                 dataManager.n(javaName, moreBlock);
+            }
+
+            ArrayList<Pair<Integer, String>> variables = dataManager.e.get(javaName);
+            if (variables != null) {
+                for (Pair<Integer, String> removed : plan.removedVariables) {
+                    variables.removeIf(v -> v.first.equals(removed.first) && v.second.equals(removed.second));
+                }
+                for (Map.Entry<Pair<Integer, String>, String> changed : plan.changedVariables.entrySet()) {
+                    for (int i = 0; i < variables.size(); i++) {
+                        Pair<Integer, String> v = variables.get(i);
+                        if (v.first.equals(changed.getKey().first) && v.second.equals(changed.getKey().second)) {
+                            variables.set(i, new Pair<>(6, changed.getValue()));
+                        }
+                    }
+                }
+            }
+            for (String declaration : plan.addedVariables) {
+                dataManager.c(javaName, 6, declaration);
+            }
+            for (String anImport : plan.addedImports) {
+                dataManager.c(javaName, 9, anImport);
             }
         }
     }
@@ -506,9 +623,9 @@ public class EventCodeBridge {
         return Jx.JAVA_EDITOR_IMPORTS_KEY.equals(key) || Jx.JAVA_EDITOR_MEMBERS_KEY.equals(key);
     }
 
-    private static String currentBody(String key, Plan plan, Map<String, String> generatedSections,
+    private static String currentBody(String key, @Nullable Plan plan, Map<String, String> generatedSections,
                                       Map<String, String> editedSections) {
-        if (plan.sections.containsKey(key)) return plan.sections.get(key);
+        if (plan != null && plan.sections.containsKey(key)) return plan.sections.get(key);
         String body = editedSections.get(key);
         if (body == null) body = generatedSections.get(key);
         return body == null ? "" : normalizeBody(body);
@@ -516,6 +633,7 @@ public class EventCodeBridge {
 
     private static String joinBodies(String first, String second) {
         String added = normalizeBody(second);
+        if (added.isEmpty()) return first;
         if (first.isEmpty()) return added;
         return first + "\n\n" + added;
     }
@@ -737,7 +855,8 @@ public class EventCodeBridge {
      * generated code can't be stored and are counted as discarded.
      */
     private static void diffOutside(String generated, String edited, Plan plan,
-                                    StringBuilder imports, StringBuilder members) {
+                                    StringBuilder imports, StringBuilder members,
+                                    List<Pair<Integer, String>> variables) {
         Outline before = outline(generated);
         Outline after = outline(edited);
 
@@ -748,7 +867,13 @@ public class EventCodeBridge {
             }
         }
         for (String anImport : before.imports) {
-            if (!after.imports.contains(anImport)) plan.discardedChanges++;
+            if (after.imports.contains(anImport)) continue;
+            Pair<Integer, String> variable = findImport(variables, anImport);
+            if (variable != null) {
+                plan.removedVariables.add(variable);
+            } else {
+                plan.discardedChanges++;
+            }
         }
         if (!before.topLevel.equals(after.topLevel)) plan.discardedChanges++;
 
@@ -758,12 +883,49 @@ public class EventCodeBridge {
                 members.append(after.rawMembers.get(member.getKey())).append("\n\n");
                 plan.movedMembers++;
             } else if (!generatedMember.equals(member.getValue())) {
+                Pair<Integer, String> variable = findVariable(variables, member.getKey(), generatedMember);
+                String declaration = fieldDeclaration(member.getValue());
+                if (variable != null && variable.first == 6 && declaration != null) {
+                    plan.changedVariables.put(variable, declaration);
+                } else {
+                    plan.discardedChanges++;
+                }
+            }
+        }
+        for (Map.Entry<String, String> member : before.members.entrySet()) {
+            if (after.members.containsKey(member.getKey())) continue;
+            Pair<Integer, String> variable = findVariable(variables, member.getKey(), member.getValue());
+            if (variable != null) {
+                plan.removedVariables.add(variable);
+            } else {
                 plan.discardedChanges++;
             }
         }
-        for (String header : before.members.keySet()) {
-            if (!after.members.containsKey(header)) plan.discardedChanges++;
+    }
+
+    /**
+     * @return The project variable a generated field declaration comes from, or {@code null}.
+     */
+    @Nullable
+    private static Pair<Integer, String> findVariable(List<Pair<Integer, String>> variables, String header, String member) {
+        String[] words = header.trim().split("\\s+");
+        String name = words[words.length - 1];
+        for (Pair<Integer, String> variable : variables) {
+            if (variable.first == 6) {
+                if (collapse(variable.second + ";").equals(member)) return variable;
+            } else if (name.equals(variableName(variable))) {
+                return variable;
+            }
         }
+        return null;
+    }
+
+    @Nullable
+    private static Pair<Integer, String> findImport(List<Pair<Integer, String>> variables, String anImport) {
+        for (Pair<Integer, String> variable : variables) {
+            if (variable.first == 9 && anImport.equals("import " + variable.second + ";")) return variable;
+        }
+        return null;
     }
 
     private Set<String> collectEventKeys(eC dataManager, String javaName,
