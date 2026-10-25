@@ -122,6 +122,7 @@ import pro.sketchware.activities.appcompat.ManageAppCompatActivity;
 import pro.sketchware.activities.editor.command.ManageXMLCommandActivity;
 import pro.sketchware.activities.editor.view.CodeViewerActivity;
 import pro.sketchware.activities.editor.view.JavaCodeEditorActivity;
+import pro.sketchware.activities.ndk.JniSourcesActivity;
 import pro.sketchware.activities.editor.view.ViewCodeEditorActivity;
 import pro.sketchware.activities.resourceseditor.ResourcesEditorActivity;
 import pro.sketchware.databinding.DesignBinding;
@@ -985,6 +986,13 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     }
 
     /**
+     * Opens {@link JniSourcesActivity}, the project's C/C++ sources built with the NDK.
+     */
+    void toNdkSourcesManager() {
+        launchActivity(JniSourcesActivity.class, null, new Pair<>("pkgName", q.packageName));
+    }
+
+    /**
      * Opens {@link ManagePermissionActivity}.
      */
     void toPermissionManager() {
@@ -1248,6 +1256,14 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                 builder.getDexFilesReady();
                 if (canceled) {
                     return;
+                }
+
+                if (builder.hasNativeCode()) {
+                    onProgress("Building C/C++ code with the NDK...", 18);
+                    builder.buildNativeCode();
+                    if (canceled) {
+                        return;
+                    }
                 }
 
                 onProgress("Building APK...", 19);

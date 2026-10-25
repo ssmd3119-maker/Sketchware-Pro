@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -173,28 +174,39 @@ public class AppBundleCompiler {
                 moduleMain.flush();
             }
 
-            var nativeLibrariesDirectory = new File(new FilePathUtil().getPathNativelibs(builder.yq.sc_id));
-            var architectures = nativeLibrariesDirectory.listFiles();
+            /* Native libraries: imported ones and ones built with the NDK */
+            var nativeLibraryDirectories = new ArrayList<File>();
+            nativeLibraryDirectories.add(new File(new FilePathUtil().getPathNativelibs(builder.yq.sc_id)));
+            if (builder.getNdkLibrariesDirectory() != null) {
+                nativeLibraryDirectories.add(builder.getNdkLibrariesDirectory());
+            }
+            var addedNativeLibraries = new HashSet<String>();
 
-            if (architectures != null) {
-                for (var architecture : architectures) {
-                    var nativeLibraries = architecture.listFiles();
-                    if (nativeLibraries != null) {
-                        for (var nativeLibrary : nativeLibraries) {
-                            /* Create a ZIP-entry of the native library */
-                            var dexZipEntry = new ZipEntry(MODULE_LIB + File.separator +
-                                    architecture.getName() + File.separator + nativeLibrary.getName());
-                            moduleMainZip.putNextEntry(dexZipEntry);
+            for (var nativeLibrariesDirectory : nativeLibraryDirectories) {
+                var architectures = nativeLibrariesDirectory.listFiles();
 
-                            /* Read the native binary and compress into module-main.zip */
-                            try (var dexInputStream = new FileInputStream(nativeLibrary)) {
-                                var buffer = new byte[1024];
-                                int length;
-                                while ((length = dexInputStream.read(buffer)) > 0) {
-                                    moduleMainZip.write(buffer, 0, length);
+                if (architectures != null) {
+                    for (var architecture : architectures) {
+                        var nativeLibraries = architecture.listFiles();
+                        if (nativeLibraries != null) {
+                            for (var nativeLibrary : nativeLibraries) {
+                                var entryName = MODULE_LIB + File.separator +
+                                        architecture.getName() + File.separator + nativeLibrary.getName();
+                                if (!nativeLibrary.isFile() || !addedNativeLibraries.add(entryName)) continue;
+                                /* Create a ZIP-entry of the native library */
+                                var dexZipEntry = new ZipEntry(entryName);
+                                moduleMainZip.putNextEntry(dexZipEntry);
+
+                                /* Read the native binary and compress into module-main.zip */
+                                try (var dexInputStream = new FileInputStream(nativeLibrary)) {
+                                    var buffer = new byte[1024];
+                                    int length;
+                                    while ((length = dexInputStream.read(buffer)) > 0) {
+                                        moduleMainZip.write(buffer, 0, length);
+                                    }
                                 }
+                                moduleMainZip.closeEntry();
                             }
-                            moduleMainZip.closeEntry();
                         }
                     }
                 }

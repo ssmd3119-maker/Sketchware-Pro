@@ -229,6 +229,10 @@ public class ExportProjectActivity extends BaseAppCompatActivity {
             if (pathNativeLibraries.exists()) {
                 FileUtil.copyDirectory(pathNativeLibraries, new File(project_metadata.generatedFilesPath, "jniLibs"));
             }
+            File pathJni = new File(util.getPathJni(sc_id));
+            if (new File(pathJni, "Android.mk").isFile()) {
+                FileUtil.copyDirectory(pathJni, new File(project_metadata.generatedFilesPath, "jni"));
+            }
 
             ArrayList<String> toCompress = new ArrayList<>();
             toCompress.add(project_metadata.projectMyscPath);
@@ -600,6 +604,15 @@ public class ExportProjectActivity extends BaseAppCompatActivity {
                 if (canceled) {
                     cancel(true);
                     return;
+                }
+
+                if (builder.hasNativeCode()) {
+                    publishProgress("Building C/C++ code with the NDK...");
+                    builder.buildNativeCode();
+                    if (canceled) {
+                        cancel(true);
+                        return;
+                    }
                 }
 
                 if (buildingAppBundle) {

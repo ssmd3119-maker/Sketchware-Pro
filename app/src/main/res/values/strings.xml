@@ -811,6 +811,8 @@ ACTION_VIEW
     <string name="design_drawer_menu_stringfog">StringFog Manager</string>
     <string name="design_drawer_menu_stringfog_subtitle">Encrypt strings in your app at compilation time</string>
     <string name="design_drawer_menu_subtitle_editor_code">Edit any Java and XML file</string>
+    <string name="design_drawer_menu_title_ndk">C/C++ (NDK)</string>
+    <string name="design_drawer_menu_description_ndk">Write C/C++ code built with ndk-build</string>
     <string name="design_drawer_menu_nativelibs">Native Library Manager</string>
     <string name="design_drawer_menu_nativelibs_subtitle">Add native libraries (.so)</string>
     <string name="design_drawer_menu_customblocks">See Custom Blocks</string>
