@@ -71,6 +71,14 @@ public class EventCodeBridge {
     private static final Pattern MORE_BLOCK_METHOD = Pattern.compile(
             "(?:(?:public|private|protected|static|final|synchronized)\\s+)*([\\w$<>,\\s]+?)\\s+_([A-Za-z$][\\w$]*)\\s*\\(([^()]*)\\)\\s*\\{");
     private static final Pattern METHOD_PARAMETER = Pattern.compile("(?:final\\s+)?([\\w$<>,\\s]+?)\\s+([A-Za-z_$][\\w$]*)");
+    /** Header of any method: return type, name, parameters. */
+    private static final Pattern ORDINARY_METHOD = Pattern.compile(
+            "(?:(?:public|private|protected|static|final|synchronized)\\s+)*([\\w$<>,\\s.\\[\\]]+?)\\s+([A-Za-z_$][\\w$]*)\\s*\\(([^()]*)\\)\\s*\\{");
+    /** A class type More Blocks can return as a view-like value, e.g. LinearLayout or GradientDrawable. */
+    private static final Pattern CLASS_TYPE = Pattern.compile("[A-Z][\\w$]*(?:\\.[A-Z][\\w$]*)*");
+    /** Methods whose names suggest they override or implement something, which a rename would break. */
+    private static final Set<String> OVERRIDE_NAMES = Set.of("run", "call", "finish", "toString", "equals",
+            "hashCode", "getView", "getCount", "getItem", "getItemId", "getItemCount", "compare", "apply");
     /** Java parameter types More Blocks support, to their spec. */
     private static final Map<String, String> MORE_BLOCK_PARAM_TYPES = Map.ofEntries(
             Map.entry("String", "%s"), Map.entry("double", "%d"), Map.entry("boolean", "%b"),
@@ -290,6 +298,29 @@ public class EventCodeBridge {
         }
         String membersBody = joinBodies(currentBody(Jx.JAVA_EDITOR_MEMBERS_KEY, plan, generatedSections, editedSections),
                 members.toString());
+
+        // Ordinary methods that More Blocks can represent become More Blocks too. More Block methods are
+        // always named _name, so the method and every call to it are renamed.
+        Set<String> takenNames = new HashSet<>();
+        if (moreBlocks != null) {
+            for (Pair<String, String> moreBlock : moreBlocks) takenNames.add(ReturnMoreblockManager.getMbName(moreBlock.first));
+        }
+        takenNames.addAll(renames.values());
+        Map<String, String> methodRenames = convertibleMethods(membersBody, edited, takenNames);
+        if (!methodRenames.isEmpty()) {
+            membersBody = renameCalls(membersBody, methodRenames);
+            for (String key : generatedSections.keySet()) {
+                if (isJavaEditorKey(key) || plan.unmatchedEvents.contains(key)) continue;
+                String body = plan.sections.get(key);
+                if (body == null) {
+                    String current = editedSections.containsKey(key) ? editedSections.get(key) : moreBlockBodies.get(key);
+                    if (current == null) continue;
+                    body = normalizeBody(applyRenames(current, renames));
+                }
+                String renamed = renameCalls(body, methodRenames);
+                if (!renamed.equals(body)) plan.sections.put(key, renamed);
+            }
+        }
         Set<String> existingMoreBlocks = new HashSet<>();
         if (moreBlocks != null) {
             for (Pair<String, String> moreBlock : moreBlocks) {
@@ -335,7 +366,8 @@ public class EventCodeBridge {
         for (Map.Entry<String, String> member : outline.members.entrySet()) {
             String raw = outline.rawMembers.get(member.getKey());
             String declaration = fieldDeclaration(member.getValue());
-            NewMoreBlock moreBlock = declaration == null ? moreBlockOf(raw, existingMoreBlocks, plan) : null;
+            NewMoreBlock moreBlock = declaration == null
+                    ? moreBlockOf(outline.codeMembers.get(member.getKey()), existingMoreBlocks, plan) : null;
             if (declaration != null) {
                 if (!plan.addedVariables.contains(declaration)) plan.addedVariables.add(declaration);
             } else if (moreBlock != null) {
@@ -367,8 +399,7 @@ public class EventCodeBridge {
             case "HashMap<String, Object>", "HashMap<String,Object>" -> "a|Map";
             case "ArrayList<String>" -> "l|List String";
             case "ArrayList<HashMap<String, Object>>", "ArrayList<HashMap<String,Object>>" -> "l|List Map";
-            case "View" -> "v|View";
-            default -> null;
+            default -> CLASS_TYPE.matcher(returnType).matches() ? "v|" + returnType : null;
         };
         if (storedType == null) return null;
         String storedName = storedType.isEmpty() ? name : name + "[" + storedType + "]";
@@ -396,6 +427,66 @@ public class EventCodeBridge {
         String body = method.substring(open + 1, close);
         if (!paramRenames.isEmpty()) body = renameIdentifiers(body, paramRenames);
         return new NewMoreBlock(storedName, spec.toString(), normalizeBody(body));
+    }
+
+    /**
+     * Finds methods without the "_" prefix that can become More Blocks: their types are supported, their
+     * name is unique and isn't a More Block yet, and it doesn't look like an override (e.g. onResume, run).
+     *
+     * @return Method name to its More Block method name ({@code _name}).
+     */
+    private static Map<String, String> convertibleMethods(String membersBody, String allCode, Set<String> takenNames) {
+        LinkedHashMap<String, String> renames = new LinkedHashMap<>();
+        if (membersBody.isEmpty()) return renames;
+        Outline outline = outline("class C {\n" + membersBody + "\n}");
+        HashMap<String, Integer> counts = new HashMap<>();
+        HashMap<String, String> methods = new HashMap<>();
+        for (Map.Entry<String, String> member : outline.members.entrySet()) {
+            String code = outline.codeMembers.get(member.getKey());
+            Matcher header = ORDINARY_METHOD.matcher(code);
+            if (!header.lookingAt()) continue;
+            String name = header.group(2);
+            counts.merge(name, 1, Integer::sum);
+            methods.put(name, code);
+        }
+        Plan scratch = new Plan();
+        for (Map.Entry<String, String> method : methods.entrySet()) {
+            String name = method.getKey();
+            if (name.startsWith("_") || counts.get(name) > 1 || takenNames.contains(name)
+                    || name.matches("on[A-Z].*") || OVERRIDE_NAMES.contains(name)
+                    || allCode.contains("super." + name + "(")) {
+                continue;
+            }
+            Map<String, String> rename = Map.of(name, "_" + name);
+            if (moreBlockOf(renameCalls(method.getValue(), rename), takenNames, scratch) != null) {
+                renames.put(name, "_" + name);
+            }
+        }
+        return renames;
+    }
+
+    /**
+     * Renames method calls and declarations ({@code name(}), leaving member calls ({@code x.name(}),
+     * constructors, strings and comments alone.
+     */
+    static String renameCalls(String code, Map<String, String> renames) {
+        ArrayList<JavaToBlocks.Token> tokens = new ArrayList<>();
+        for (JavaToBlocks.Token token : JavaToBlocks.tokenize(code)) {
+            if (!token.comment) tokens.add(token);
+        }
+        StringBuilder sb = new StringBuilder();
+        int last = 0;
+        for (int i = 0; i < tokens.size(); i++) {
+            JavaToBlocks.Token token = tokens.get(i);
+            String replacement = renames.get(token.text);
+            if (replacement == null || i + 1 >= tokens.size() || !tokens.get(i + 1).text.equals("(")) continue;
+            String previous = i > 0 ? tokens.get(i - 1).text : "";
+            if (previous.equals(".") || previous.equals("new") || previous.equals("::")) continue;
+            sb.append(code, last, token.start).append(replacement);
+            last = token.end;
+        }
+        sb.append(code.substring(last));
+        return sb.toString();
     }
 
     /**
@@ -903,8 +994,10 @@ public class EventCodeBridge {
         final ArrayList<String> topLevel = new ArrayList<>();
         /** Normalized header (declaration up to "{", "=" or ";") to normalized member text. */
         final LinkedHashMap<String, String> members = new LinkedHashMap<>();
-        /** Normalized header to the member's code as typed. */
+        /** Normalized header to the member as typed, with the comments before it and on its last line. */
         final HashMap<String, String> rawMembers = new HashMap<>();
+        /** Normalized header to the member's code as typed, without those comments. */
+        final HashMap<String, String> codeMembers = new HashMap<>();
     }
 
     private static Outline outline(String code) {
@@ -921,20 +1014,29 @@ public class EventCodeBridge {
         Outline outline = new Outline();
         int depth = 0;
         int start = -1;
+        int commentStart = -1;
+        int displayStart = -1;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             char next = i + 1 < text.length() ? text.charAt(i + 1) : 0;
-            if (c == '/' && next == '/') {
-                int lineEnd = text.indexOf('\n', i);
-                i = lineEnd < 0 ? text.length() : lineEnd;
-                continue;
-            } else if (c == '/' && next == '*') {
-                int commentEnd = text.indexOf("*/", i + 2);
-                i = commentEnd < 0 ? text.length() : commentEnd + 1;
+            if ((c == '/' && next == '/') || (c == '/' && next == '*')) {
+                // Comments between members belong to the member after them.
+                if (depth == 1 && start < 0 && commentStart < 0) commentStart = i;
+                if (next == '/') {
+                    int lineEnd = text.indexOf('\n', i);
+                    i = lineEnd < 0 ? text.length() : lineEnd;
+                } else {
+                    int commentEnd = text.indexOf("*/", i + 2);
+                    i = commentEnd < 0 ? text.length() : commentEnd + 1;
+                }
                 continue;
             }
             if (Character.isWhitespace(c)) continue;
-            if (start < 0) start = i;
+            if (start < 0) {
+                start = i;
+                displayStart = depth == 1 && commentStart >= 0 ? commentStart : i;
+                commentStart = -1;
+            }
 
             if (c == '"' || c == '\'') {
                 for (i++; i < text.length() && text.charAt(i) != c; i++) {
@@ -954,8 +1056,9 @@ public class EventCodeBridge {
                     int after = end;
                     while (after < text.length() && Character.isWhitespace(text.charAt(after))) after++;
                     if (after < text.length() && text.charAt(after) == ';') end = after + 1;
-                    addMember(outline, text.substring(start, end));
-                    i = end - 1;
+                    int displayEnd = trailingCommentEnd(text, end);
+                    addMember(outline, text.substring(start, end), text.substring(displayStart, displayEnd));
+                    i = displayEnd - 1;
                     start = -1;
                 } else if (depth == 0) {
                     start = -1;
@@ -966,7 +1069,9 @@ public class EventCodeBridge {
                     (statement.startsWith("import ") ? outline.imports : outline.topLevel).add(statement);
                     start = -1;
                 } else if (depth == 1) {
-                    addMember(outline, text.substring(start, i + 1));
+                    int displayEnd = trailingCommentEnd(text, i + 1);
+                    addMember(outline, text.substring(start, i + 1), text.substring(displayStart, displayEnd));
+                    i = displayEnd - 1;
                     start = -1;
                 }
             }
@@ -974,7 +1079,20 @@ public class EventCodeBridge {
         return outline;
     }
 
-    private static void addMember(Outline outline, String raw) {
+    /**
+     * @return End of a {@code //} comment on the same line after {@code end}, or {@code end}.
+     */
+    private static int trailingCommentEnd(String text, int end) {
+        int i = end;
+        while (i < text.length() && (text.charAt(i) == ' ' || text.charAt(i) == '\t')) i++;
+        if (text.startsWith("//", i)) {
+            int lineEnd = text.indexOf('\n', i);
+            return lineEnd < 0 ? text.length() : lineEnd;
+        }
+        return end;
+    }
+
+    private static void addMember(Outline outline, String raw, String display) {
         String member = collapse(raw);
         int headerEnd = member.length();
         for (char c : new char[]{'{', '=', ';'}) {
@@ -983,7 +1101,8 @@ public class EventCodeBridge {
         }
         String header = member.substring(0, headerEnd).trim();
         outline.members.putIfAbsent(header, member);
-        outline.rawMembers.putIfAbsent(header, raw);
+        outline.rawMembers.putIfAbsent(header, display);
+        outline.codeMembers.putIfAbsent(header, raw);
     }
 
     private static String collapse(String code) {
