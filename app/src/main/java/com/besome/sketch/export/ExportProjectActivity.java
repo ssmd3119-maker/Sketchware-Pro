@@ -40,6 +40,7 @@ import a.a.a.oB;
 import a.a.a.wq;
 import a.a.a.yB;
 import a.a.a.yq;
+import a.a.a.zy;
 import kellinwood.security.zipsigner.ZipSigner;
 import kellinwood.security.zipsigner.optional.CustomKeySigner;
 import kellinwood.security.zipsigner.optional.LoadKeystoreException;
@@ -567,6 +568,15 @@ public class ExportProjectActivity extends BaseAppCompatActivity {
                     return;
                 }
 
+                if (builder.hasNativeCode()) {
+                    publishProgress("Building C/C++ code with the NDK...");
+                    builder.buildNativeCode();
+                    if (canceled) {
+                        cancel(true);
+                        return;
+                    }
+                }
+
                 publishProgress("Java is compiling...");
                 builder.compileJavaCode();
                 if (canceled) {
@@ -604,15 +614,6 @@ public class ExportProjectActivity extends BaseAppCompatActivity {
                 if (canceled) {
                     cancel(true);
                     return;
-                }
-
-                if (builder.hasNativeCode()) {
-                    publishProgress("Building C/C++ code with the NDK...");
-                    builder.buildNativeCode();
-                    if (canceled) {
-                        cancel(true);
-                        return;
-                    }
                 }
 
                 if (buildingAppBundle) {
@@ -692,6 +693,10 @@ public class ExportProjectActivity extends BaseAppCompatActivity {
                         "Incorrect password, or integrity check failed.".equals(throwable.getMessage())) {
                     activity.get().runOnUiThread(() -> SketchwareUtil.showAnErrorOccurredDialog(activity.get(),
                             "Either an incorrect password was entered, or your key store is corrupt."));
+                } else if (throwable instanceof zy) {
+                    // Build errors (Java, NDK, ...) carry the build log as their message.
+                    activity.get().runOnUiThread(() -> SketchwareUtil.showAnErrorOccurredDialog(activity.get(),
+                            throwable.getMessage()));
                 } else {
                     Log.e("AppExporter", throwable.getMessage(), throwable);
                     activity.get().runOnUiThread(() -> SketchwareUtil.showAnErrorOccurredDialog(activity.get(),

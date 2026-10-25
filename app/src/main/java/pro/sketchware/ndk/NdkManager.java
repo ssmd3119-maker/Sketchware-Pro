@@ -111,30 +111,43 @@ public final class NdkManager {
      */
     public static void install(Context context, File archive, @Nullable ProgressListener listener) throws IOException {
         File root = getInstallRoot(context);
-        deleteRecursively(root);
-        File target = new File(root, installName(archive.getName()));
-        if (!target.mkdirs() && !target.isDirectory()) {
-            throw new IOException("Can't create " + target);
+        String installName = installName(archive.getName());
+        // Extract next to the current NDK first, so a broken archive doesn't remove a working NDK.
+        File staging = new File(root, ".installing-" + installName);
+        deleteRecursively(staging);
+        if (!staging.mkdirs() && !staging.isDirectory()) {
+            throw new IOException("Can't create " + staging);
         }
 
         String name = archive.getName().toLowerCase();
         try {
             if (name.endsWith(".zip")) {
-                extractZip(archive, target, listener);
+                extractZip(archive, staging, listener);
             } else {
                 try (InputStream in = new BufferedInputStream(new FileInputStream(archive))) {
                     InputStream tar = name.endsWith(".tar") ? in : new GZIPInputStream(in, 65536);
-                    extractTar(tar, target, listener);
+                    extractTar(tar, staging, listener);
                 }
             }
+            if (findNdkBuildIn(staging) == null) {
+                throw new IOException("This archive doesn't contain an ndk-build program, so it isn't an on-device NDK package.");
+            }
         } catch (IOException | RuntimeException e) {
-            deleteRecursively(root);
+            deleteRecursively(staging);
             throw e;
         }
 
-        if (findNdkBuildIn(target) == null) {
-            deleteRecursively(root);
-            throw new IOException("This archive doesn't contain an ndk-build program, so it isn't an on-device NDK package.");
+        // Replace the previous NDK.
+        File[] previous = root.listFiles();
+        if (previous != null) {
+            for (File old : previous) {
+                if (!old.equals(staging)) deleteRecursively(old);
+            }
+        }
+        File target = new File(root, installName);
+        if (!staging.renameTo(target)) {
+            deleteRecursively(staging);
+            throw new IOException("Can't move the NDK to " + target);
         }
         if (!new File(target, INSTALLED_MARKER).createNewFile()) {
             throw new IOException("Can't finish the installation in " + target);

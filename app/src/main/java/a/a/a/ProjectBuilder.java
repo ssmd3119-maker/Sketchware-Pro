@@ -96,6 +96,8 @@ public class ProjectBuilder {
     private BuildProgressReceiver progressReceiver;
     @Nullable
     private File ndkLibrariesDirectory;
+    @Nullable
+    private volatile NdkBuilder activeNdkBuilder;
     private boolean buildAppBundle = false;
     private ArrayList<File> dexesToAddButNotMerge = new ArrayList<>();
 
@@ -488,13 +490,41 @@ public class ProjectBuilder {
     public void buildNativeCode() throws zy {
         NdkBuilder ndkBuilder = new NdkBuilder(context, yq.sc_id);
         if (!ndkBuilder.hasSources()) return;
+        activeNdkBuilder = ndkBuilder;
         try {
             String output = ndkBuilder.build(null);
             LogUtil.d(TAG, "ndk-build output: " + output);
             ndkLibrariesDirectory = ndkBuilder.getLibrariesDirectory();
         } catch (NdkBuilder.NdkBuildException e) {
             throw new zy(e.getMessage());
+        } finally {
+            activeNdkBuilder = null;
         }
+
+        // The APK can't contain the same library twice.
+        File imported = new File(fpu.getPathNativelibs(yq.sc_id));
+        File[] abis = ndkLibrariesDirectory.listFiles(File::isDirectory);
+        if (abis != null) {
+            for (File abi : abis) {
+                String[] libraries = abi.list();
+                if (libraries == null) continue;
+                for (String library : libraries) {
+                    if (new File(new File(imported, abi.getName()), library).exists()) {
+                        throw new zy(abi.getName() + "/" + library + " is built from the project's C/C++ code and also"
+                                + " imported in the Native Library Manager. Remove one of them, or rename the NDK"
+                                + " module (LOCAL_MODULE in Android.mk).");
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Stops {@link #buildNativeCode()} if it's running.
+     */
+    public void cancelNativeBuild() {
+        NdkBuilder running = activeNdkBuilder;
+        if (running != null) running.cancel();
     }
 
     /**

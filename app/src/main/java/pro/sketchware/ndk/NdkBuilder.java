@@ -20,8 +20,8 @@ import pro.sketchware.utility.FilePathUtil;
 /**
  * Builds a project's C/C++ sources ({@code files/jni/Android.mk}) with the installed NDK's {@code ndk-build}.
  * <p>
- * Objects and libraries go to {@code .sketchware/data/<sc_id>/ndk/}, so later builds only recompile what
- * changed. The libraries ({@code libs/<abi>/lib*.so}) are packaged into the APK by the project builder.
+ * Objects and libraries go to the app's internal storage ({@code files/ndk-out/<sc_id>/}), so later builds
+ * only recompile what changed. The libraries ({@code libs/<abi>/lib*.so}) are packaged into the APK by the project builder.
  */
 public class NdkBuilder {
 
@@ -37,6 +37,7 @@ public class NdkBuilder {
     private final String scId;
     private final FilePathUtil paths = new FilePathUtil();
     private volatile Process process;
+    private volatile boolean cancelled;
 
     public NdkBuilder(Context context, String scId) {
         this.context = context.getApplicationContext();
@@ -47,12 +48,20 @@ public class NdkBuilder {
         return new File(paths.getPathJni(scId));
     }
 
+    /**
+     * Build output lives in internal storage, outside the project's data folder, so it isn't copied into
+     * project backups. Only the sources (files/jni) belong to the project.
+     */
+    public File getOutputDirectory() {
+        return new File(context.getFilesDir(), "ndk-out" + File.separator + scId);
+    }
+
     public File getLibrariesDirectory() {
-        return new File(paths.getPathNdkOutput(scId), "libs");
+        return new File(getOutputDirectory(), "libs");
     }
 
     public File getObjectsDirectory() {
-        return new File(paths.getPathNdkOutput(scId), "obj");
+        return new File(getOutputDirectory(), "obj");
     }
 
     /**
@@ -101,6 +110,7 @@ public class NdkBuilder {
         command.add("NDK_LIBS_OUT=" + libs.getAbsolutePath());
         command.add("-j" + Math.max(1, Runtime.getRuntime().availableProcessors()));
 
+        cancelled = false;
         StringBuilder output = new StringBuilder();
         int exitCode;
         try {
@@ -129,6 +139,9 @@ public class NdkBuilder {
         } finally {
             process = null;
         }
+        if (cancelled) {
+            throw new NdkBuildException("NDK build was cancelled.");
+        }
         if (exitCode != 0) {
             throw new NdkBuildException("NDK build failed (exit code " + exitCode + "):\n" + output);
         }
@@ -139,6 +152,7 @@ public class NdkBuilder {
      * Stops a running build.
      */
     public void cancel() {
+        cancelled = true;
         Process running = process;
         if (running != null) running.destroy();
     }
@@ -147,7 +161,7 @@ public class NdkBuilder {
      * Deletes the build output, so the next build compiles everything.
      */
     public void clean() throws IOException {
-        NdkManager.deleteRecursively(new File(paths.getPathNdkOutput(scId)));
+        NdkManager.deleteRecursively(getOutputDirectory());
     }
 
     /**

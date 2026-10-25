@@ -1109,6 +1109,8 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     }
 
     private static class BuildTask extends BaseTask implements BuildProgressReceiver {
+        /** The builder while it runs a step that can be stopped, i.e. the NDK build. */
+        private volatile ProjectBuilder runningBuilder;
         public static final String ACTION_CANCEL_BUILD = "com.besome.sketch.design.ACTION_CANCEL_BUILD";
         private static final String CHANNEL_ID = "build_notification_channel";
         private final ExecutorService executorService = Executors.newSingleThreadExecutor();
@@ -1228,6 +1230,22 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                     return;
                 }
 
+                if (builder.hasNativeCode()) {
+                    onProgress("Building C/C++ code with the NDK...", 12);
+                    runningBuilder = builder;
+                    try {
+                        builder.buildNativeCode();
+                    } catch (zy e) {
+                        if (canceled) return;
+                        throw e;
+                    } finally {
+                        runningBuilder = null;
+                    }
+                    if (canceled) {
+                        return;
+                    }
+                }
+
                 onProgress("Java is compiling...", 13);
                 builder.compileJavaCode();
                 if (canceled) {
@@ -1256,14 +1274,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                 builder.getDexFilesReady();
                 if (canceled) {
                     return;
-                }
-
-                if (builder.hasNativeCode()) {
-                    onProgress("Building C/C++ code with the NDK...", 18);
-                    builder.buildNativeCode();
-                    if (canceled) {
-                        return;
-                    }
                 }
 
                 onProgress("Building APK...", 19);
@@ -1362,6 +1372,8 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
 
         public void cancelBuild() {
             canceled = true;
+            ProjectBuilder builder = runningBuilder;
+            if (builder != null) builder.cancelNativeBuild();
             onProgress("Canceling build...", -1);
             if (isShowingNotification) {
                 notificationManager.cancel(notificationId);
