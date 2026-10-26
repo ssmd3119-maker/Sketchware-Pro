@@ -44,6 +44,7 @@ public class AgentActivity extends BaseAppCompatActivity implements AgentSession
 
     private static final int MENU_NEW_CHAT = 1;
     private static final int MENU_SETTINGS = 2;
+    private static final String OTHER_MODEL = "Other model (type its ID)";
 
     private ActivityAgentBinding binding;
     private AgentSession session;
@@ -240,8 +241,21 @@ public class AgentActivity extends BaseAppCompatActivity implements AgentSession
         DialogAgentSettingsBinding dialog = DialogAgentSettingsBinding.inflate(LayoutInflater.from(this));
         dialog.apiKey.setText(settings.getApiKey());
         dialog.baseUrl.setText(settings.getBaseUrl());
-        dialog.model.setSimpleItems(AgentSettings.MODEL_NAMES);
+        String[] modelChoices = Arrays.copyOf(AgentSettings.MODEL_NAMES, AgentSettings.MODEL_NAMES.length + 1);
+        modelChoices[modelChoices.length - 1] = OTHER_MODEL;
+        dialog.model.setSimpleItems(modelChoices);
         dialog.model.setText(AgentSettings.modelName(settings.getModel()), false);
+        dialog.model.setOnItemClickListener((parent, view, position, id) -> {
+            if (position == modelChoices.length - 1) {
+                // Let the user type the ID their service expects.
+                dialog.model.setText("", false);
+                dialog.model.requestFocus();
+                dialog.model.post(() -> {
+                    android.view.inputmethod.InputMethodManager keyboard = getSystemService(android.view.inputmethod.InputMethodManager.class);
+                    if (keyboard != null) keyboard.showSoftInput(dialog.model, 0);
+                });
+            }
+        });
         dialog.effort.setSimpleItems(AgentSettings.EFFORTS);
         dialog.effort.setText(settings.getEffort(), false);
         dialog.autoApprove.setChecked(settings.isAutoApprove());
@@ -250,7 +264,8 @@ public class AgentActivity extends BaseAppCompatActivity implements AgentSession
                 .setTitle("Agent settings")
                 .setView(dialog.getRoot())
                 .setPositiveButton(R.string.common_word_save, (d, w) -> {
-                    String model = AgentSettings.modelId(String.valueOf(dialog.model.getText()));
+                    String typed = String.valueOf(dialog.model.getText());
+                    String model = AgentSettings.modelId(typed.equals(OTHER_MODEL) ? "" : typed);
                     String effort = String.valueOf(dialog.effort.getText());
                     if (!Arrays.asList(AgentSettings.EFFORTS).contains(effort)) effort = "high";
                     settings.save(String.valueOf(dialog.apiKey.getText()), String.valueOf(dialog.baseUrl.getText()), model, effort, dialog.autoApprove.isChecked());
