@@ -86,7 +86,10 @@ public class AgentTools {
         this.project = project;
     }
 
-    public static List<Tool> definitions() {
+    /**
+     * @param eagerInputStreaming Stream tool inputs as they're generated; Claude-specific, so off for other models.
+     */
+    public static List<Tool> definitions(boolean eagerInputStreaming) {
         ArrayList<Tool> tools = new ArrayList<>();
         for (Spec spec : SPECS) {
             Tool.InputSchema.Properties.Builder properties = Tool.InputSchema.Properties.builder();
@@ -96,16 +99,16 @@ public class AgentTools {
                         "type", param.type(), "description", param.description())));
                 if (param.required()) required.add(param.name());
             }
-            tools.add(Tool.builder()
+            Tool.Builder tool = Tool.builder()
                     .name(spec.name())
                     .description(spec.description())
                     .inputSchema(Tool.InputSchema.builder()
                             .properties(properties.build())
                             .required(required)
-                            .build())
-                    // File bodies and code stream as they're generated instead of after a long silent pause.
-                    .eagerInputStreaming(true)
-                    .build());
+                            .build());
+            // File bodies and code stream as they're generated instead of after a long silent pause.
+            if (eagerInputStreaming) tool.eagerInputStreaming(true);
+            tools.add(tool.build());
         }
         return tools;
     }

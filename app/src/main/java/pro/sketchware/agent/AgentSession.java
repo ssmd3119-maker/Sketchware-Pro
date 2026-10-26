@@ -206,7 +206,7 @@ public class AgentSession {
             return;
         }
         AnthropicClient client = client(apiKey, settings.getBaseUrl());
-        List<Tool> toolDefinitions = AgentTools.definitions();
+        List<Tool> toolDefinitions = AgentTools.definitions(AgentSettings.isKnownModel(settings.getModel()));
 
         for (int turn = 0; turn < MAX_TURNS; turn++) {
             if (cancelled) {
@@ -283,15 +283,20 @@ public class AgentSession {
 
     private Message requestTurn(AnthropicClient client, List<Tool> toolDefinitions) {
         String model = settings.getModel();
+        boolean claude = AgentSettings.isKnownModel(model);
         MessageCreateParams.Builder params = MessageCreateParams.builder()
                 .model(model)
-                .maxTokens(64000L)
+                // A model typed by the user may allow fewer output tokens than Claude's.
+                .maxTokens(claude ? 64000L : 16000L)
                 .systemOfTextBlockParams(List.of(TextBlockParam.builder().text(AgentPrompt.SYSTEM).build()))
-                .thinking(ThinkingConfigAdaptive.builder().display(ThinkingConfigAdaptive.Display.SUMMARIZED).build())
-                .outputConfig(OutputConfig.builder().effort(effort(settings.getEffort())).build())
-                // Caches everything up to the newest message, so each step only pays for what's new.
-                .cacheControl(CacheControlEphemeral.builder().build())
                 .messages(history);
+        if (claude) {
+            // Claude-specific options; other Anthropic-compatible services may reject them.
+            params.thinking(ThinkingConfigAdaptive.builder().display(ThinkingConfigAdaptive.Display.SUMMARIZED).build())
+                    .outputConfig(OutputConfig.builder().effort(effort(settings.getEffort())).build())
+                    // Caches everything up to the newest message, so each step only pays for what's new.
+                    .cacheControl(CacheControlEphemeral.builder().build());
+        }
         for (Tool tool : toolDefinitions) params.addTool(tool);
         if (supportsServerFallback(model)) {
             // Retries a declined request on the model Anthropic recommends for that kind of refusal.

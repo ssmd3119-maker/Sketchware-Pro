@@ -18,7 +18,7 @@
             style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Anthropic API key"
+            android:hint="API key"
             app:endIconMode="password_toggle"
             app:helperText="Get one at platform.claude.com. It stays on this device.">
 
@@ -35,13 +35,15 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:hint="Model">
+            android:hint="Model"
+            app:helperText="Pick a Claude model, or type the model ID your API address expects.">
 
             <com.google.android.material.textfield.MaterialAutoCompleteTextView
                 android:id="@+id/model"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:inputType="none" />
+                android:inputType="text"
+                android:singleLine="true" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <com.google.android.material.textfield.TextInputLayout
@@ -65,7 +67,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:hint="API address (optional)"
-            app:helperText="Leave empty to use Anthropic's API directly.">
+            app:helperText="For a proxy or a service with an Anthropic-compatible API. Leave empty to use Anthropic's API.">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/baseUrl"

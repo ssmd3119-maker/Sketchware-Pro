@@ -240,10 +240,8 @@ public class AgentActivity extends BaseAppCompatActivity implements AgentSession
         DialogAgentSettingsBinding dialog = DialogAgentSettingsBinding.inflate(LayoutInflater.from(this));
         dialog.apiKey.setText(settings.getApiKey());
         dialog.baseUrl.setText(settings.getBaseUrl());
-        List<String> models = Arrays.asList(AgentSettings.MODELS);
-        int modelIndex = Math.max(0, models.indexOf(settings.getModel()));
         dialog.model.setSimpleItems(AgentSettings.MODEL_NAMES);
-        dialog.model.setText(AgentSettings.MODEL_NAMES[modelIndex], false);
+        dialog.model.setText(AgentSettings.modelName(settings.getModel()), false);
         dialog.effort.setSimpleItems(AgentSettings.EFFORTS);
         dialog.effort.setText(settings.getEffort(), false);
         dialog.autoApprove.setChecked(settings.isAutoApprove());
@@ -252,8 +250,7 @@ public class AgentActivity extends BaseAppCompatActivity implements AgentSession
                 .setTitle("Agent settings")
                 .setView(dialog.getRoot())
                 .setPositiveButton(R.string.common_word_save, (d, w) -> {
-                    int selected = Arrays.asList(AgentSettings.MODEL_NAMES).indexOf(String.valueOf(dialog.model.getText()));
-                    String model = selected >= 0 ? AgentSettings.MODELS[selected] : AgentSettings.DEFAULT_MODEL;
+                    String model = AgentSettings.modelId(String.valueOf(dialog.model.getText()));
                     String effort = String.valueOf(dialog.effort.getText());
                     if (!Arrays.asList(AgentSettings.EFFORTS).contains(effort)) effort = "high";
                     settings.save(String.valueOf(dialog.apiKey.getText()), String.valueOf(dialog.baseUrl.getText()), model, effort, dialog.autoApprove.isChecked());

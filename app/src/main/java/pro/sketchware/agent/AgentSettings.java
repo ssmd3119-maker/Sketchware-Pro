@@ -57,6 +57,26 @@ public class AgentSettings {
                 .apply();
     }
 
+    /**
+     * @param nameOrId A model name from {@link #MODEL_NAMES}, or any model ID typed by the user.
+     */
+    public static String modelId(String nameOrId) {
+        String text = nameOrId.trim();
+        if (text.isEmpty()) return DEFAULT_MODEL;
+        for (int i = 0; i < MODEL_NAMES.length; i++) {
+            if (MODEL_NAMES[i].equals(text)) return MODELS[i];
+        }
+        return text;
+    }
+
+    /** Whether the model is one of the Claude models offered, rather than an ID the user typed. */
+    public static boolean isKnownModel(String model) {
+        for (String known : MODELS) {
+            if (known.equals(model)) return true;
+        }
+        return false;
+    }
+
     public static String modelName(String model) {
         for (int i = 0; i < MODELS.length; i++) {
             if (MODELS[i].equals(model)) return MODEL_NAMES[i];
