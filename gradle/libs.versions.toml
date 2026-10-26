@@ -27,6 +27,7 @@ kotlinCompiler = "2.1.21"
 lottie = "6.7.1"
 material = "1.14.0"
 okhttp = "5.5.0"
+anthropic = "2.34.0"
 okio = "3.18.2"
 preference = "1.2.1"
 #noinspection NewerVersionAvailable
@@ -98,6 +99,7 @@ kotlin-compiler = { module = "org.jetbrains.kotlin:kotlin-compiler", version.ref
 kotlinc-for1-sketchware = { module = "com.github.PranavPurwar:kotlinc-android", version.ref = "kotlincForSketchware" }
 
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+anthropic-java = { module = "com.anthropic:anthropic-java", version.ref = "anthropic" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 
 proguard-core = { module = "com.guardsquare:proguard-core", version.ref = "proguardCore" }

@@ -186,6 +186,27 @@ public class EventCodeBridge {
                     || !changedVariables.isEmpty() || !addedMoreBlocks.isEmpty() || !addedEvents.isEmpty();
         }
 
+        /**
+         * @return What saving this plan does that the user may not expect, one sentence each.
+         */
+        public List<String> warnings() {
+            ArrayList<String> warnings = new ArrayList<>();
+            if (!deletedMoreBlocks.isEmpty()) {
+                warnings.add("These More Blocks will be deleted because their methods were removed: "
+                        + String.join(", ", deletedMoreBlocks) + ". Remove any remaining calls to them.");
+            }
+            if (discardedChanges > 0) {
+                warnings.add(discardedChanges + (discardedChanges == 1 ? " change" : " changes")
+                        + " to generated code (for example widget fields, listeners or generated methods) can't be"
+                        + " stored and will come back. Change those in the Design or Logic editor instead.");
+            }
+            if (!unmatchedEvents.isEmpty()) {
+                warnings.add("Event markers were removed for " + String.join(", ", unmatchedEvents)
+                        + ", so those events keep their blocks.");
+            }
+            return warnings;
+        }
+
         public String summary() {
             ArrayList<String> parts = new ArrayList<>();
             int events = 0;

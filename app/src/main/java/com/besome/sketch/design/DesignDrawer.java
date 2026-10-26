@@ -51,6 +51,8 @@ public class DesignDrawer extends LinearLayout {
             designActivity.toJavaManager();
         } else if (id == R.id.item_ndk_manager) {
             designActivity.toNdkSourcesManager();
+        } else if (id == R.id.item_ai_agent) {
+            designActivity.toAiAgent();
         } else if (id == R.id.item_resource_manager) {
             designActivity.toResourceManager();
         } else if (id == R.id.item_resource_editor) {
@@ -118,6 +120,7 @@ public class DesignDrawer extends LinearLayout {
         UI.addSystemWindowInsetToPadding(this, false, false, true, false);
 
         addDrawerSubheaderItem(R.string.design_drawer_menu_title, content);
+        addDrawerItem(R.id.item_ai_agent, R.drawable.ic_mtrl_auto_awesome, R.string.design_drawer_menu_title_ai_agent, R.string.design_drawer_menu_description_ai_agent, content);
         addDrawerItem(R.id.item_library_manager, R.drawable.ic_mtrl_category, R.string.design_drawer_menu_title_library, R.string.design_drawer_menu_description_library, content);
         addDrawerItem(R.id.item_view_manager, R.drawable.ic_mtrl_devices, R.string.design_drawer_menu_title_view, R.string.design_drawer_menu_description_view, content);
         addDrawerItem(R.id.item_image_manager, R.drawable.ic_mtrl_image, R.string.design_drawer_menu_title_image, R.string.design_drawer_menu_description_image, content);

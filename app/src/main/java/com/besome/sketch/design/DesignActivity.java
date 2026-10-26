@@ -122,6 +122,7 @@ import pro.sketchware.activities.appcompat.ManageAppCompatActivity;
 import pro.sketchware.activities.editor.command.ManageXMLCommandActivity;
 import pro.sketchware.activities.editor.view.CodeViewerActivity;
 import pro.sketchware.activities.editor.view.JavaCodeEditorActivity;
+import pro.sketchware.activities.agent.AgentActivity;
 import pro.sketchware.activities.ndk.JniSourcesActivity;
 import pro.sketchware.activities.editor.view.ViewCodeEditorActivity;
 import pro.sketchware.activities.resourceseditor.ResourcesEditorActivity;
@@ -182,6 +183,15 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     private br componentTabAdapter;
     private final ActivityResultLauncher<Intent> openJavaCodeEditor = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
         if (result.getResultCode() == RESULT_OK) {
+            refreshEventTabAdapter();
+        }
+    });
+    private final ActivityResultLauncher<Intent> openAiAgent = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+        if (result.getResultCode() == RESULT_OK) {
+            // The agent may have changed layouts and blocks.
+            if (viewTabAdapter != null) {
+                viewTabAdapter.i();
+            }
             refreshEventTabAdapter();
         }
     });
@@ -990,6 +1000,13 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
      */
     void toNdkSourcesManager() {
         launchActivity(JniSourcesActivity.class, null, new Pair<>("pkgName", q.packageName));
+    }
+
+    /**
+     * Opens {@link AgentActivity}.
+     */
+    void toAiAgent() {
+        launchActivity(AgentActivity.class, openAiAgent);
     }
 
     /**

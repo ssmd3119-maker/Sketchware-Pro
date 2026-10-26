@@ -13,7 +13,7 @@ import com.besome.sketch.beans.ProjectFileBean;
 import com.besome.sketch.lib.base.BaseAppCompatActivity;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
-import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -221,20 +221,7 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
     private void save(boolean finishAfter, boolean convertAll) {
         EventCodeBridge.Plan plan = bridge.plan(generatedCode, editorText(), convertAll);
 
-        ArrayList<String> warnings = new ArrayList<>();
-        if (!plan.deletedMoreBlocks.isEmpty()) {
-            warnings.add("These More Blocks will be deleted because their methods were removed: "
-                    + String.join(", ", plan.deletedMoreBlocks) + ". Remove any remaining calls to them.");
-        }
-        if (plan.discardedChanges > 0) {
-            warnings.add(plan.discardedChanges + (plan.discardedChanges == 1 ? " change" : " changes")
-                    + " to generated code (for example widget fields, listeners or generated methods) can't be"
-                    + " stored and will come back. Change those in the Design or Logic editor instead.");
-        }
-        if (!plan.unmatchedEvents.isEmpty()) {
-            warnings.add("Event markers were removed for " + String.join(", ", plan.unmatchedEvents)
-                    + ", so those events keep their blocks.");
-        }
+        List<String> warnings = plan.warnings();
 
         if (warnings.isEmpty()) {
             applyAndReload(plan, finishAfter);
