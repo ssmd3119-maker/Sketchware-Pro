@@ -332,7 +332,8 @@ public class JniSourcesActivity extends BaseAppCompatActivity {
         FileUtil.writeFile(new File(root, "Application.mk").getAbsolutePath(),
                 "APP_ABI := " + NdkBuilder.DEFAULT_ABIS + "\n"
                         + "APP_PLATFORM := " + NdkBuilder.DEFAULT_PLATFORM + "\n");
-        FileUtil.writeFile(new File(root, "native-lib.c").getAbsolutePath(), """
+        // String.format, not String.formatted(): the latter only exists on Android 14+.
+        FileUtil.writeFile(new File(root, "native-lib.c").getAbsolutePath(), String.format("""
                 #include <jni.h>
 
                 // Called from MainActivity: public native String stringFromJNI();
@@ -340,13 +341,13 @@ public class JniSourcesActivity extends BaseAppCompatActivity {
                 Java_%s_stringFromJNI(JNIEnv *env, jobject thiz) {
                     return (*env)->NewStringUTF(env, "Hello from C");
                 }
-                """.formatted(jniClassPath()));
+                """, jniClassPath()));
         openDirectory(root);
         showUsage();
     }
 
     private void showUsage() {
-        String usage = """
+        String usage = String.format("""
                 The libraries built here are added to your APK as lib<module>.so.
 
                 In MainActivity (e.g. with the Direct Java editor), load the library and declare its functions:
@@ -359,7 +360,7 @@ public class JniSourcesActivity extends BaseAppCompatActivity {
 
                 Then call stringFromJNI() from your blocks or code.
                 C function names must be Java_<package with _>_<Class>_<method>, e.g.
-                Java_%s_stringFromJNI""".formatted(jniClassPath());
+                Java_%s_stringFromJNI""", jniClassPath());
         showText("Using C/C++ from Java", usage);
     }
 
