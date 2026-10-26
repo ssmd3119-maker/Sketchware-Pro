@@ -761,6 +761,16 @@ public class EventCodeBridge {
     }
 
     /**
+     * @param code The code inside the new event; it's converted to blocks by {@link #apply(Plan, Context)}.
+     * @return A plan that adds one event of this activity.
+     */
+    public Plan planNewEvent(int eventType, int targetType, String targetId, String eventName, String code) {
+        Plan plan = new Plan();
+        plan.addedEvents.add(new NewEvent(eventType, targetType, targetId, eventName, normalizeBody(code)));
+        return plan;
+    }
+
+    /**
      * Stores a {@link Plan} in the project's blocks. Changes are made in memory, like the Logic editor's;
      * the Design screen saves them with the project.
      * <p>

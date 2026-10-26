@@ -66,6 +66,25 @@ public class AgentTools {
                     + " read_activity_java returned) as blocks, like the Direct Java editor does.", true, List.of(
                     new Param("activity", "string", "Java file of the activity, e.g. \"MainActivity.java\".", true),
                     new Param("code", "string", "The complete Java source, keeping the region markers.", true))),
+            new Spec("list_events", "List an activity's events, and the events that can still be added for the"
+                    + " activity, each widget of its layout and each component.", false, List.of(
+                    new Param("activity", "string", "Java file of the activity, e.g. \"MainActivity.java\".", true))),
+            new Spec("add_event", "Add an event (e.g. a button's onClick, a component's onResponse, the activity's"
+                    + " onResume) to an activity with the code it runs, saved as blocks. This is the way to react to"
+                    + " widgets and components: don't write setOnClickListener or similar code yourself.", true, List.of(
+                    new Param("activity", "string", "Java file of the activity, e.g. \"MainActivity.java\".", true),
+                    new Param("target", "string", "\"activity\" for activity events, otherwise the widget's or component's id, e.g. \"button1\".", true),
+                    new Param("event", "string", "Event name from list_events, e.g. \"onClick\".", true),
+                    new Param("code", "string", "Java code the event runs (the method body only). Use the event's parameters as list_events/read_activity_java show them, e.g. _view for onClick.", true))),
+            new Spec("list_components", "List an activity's components (Intent, SharedPreferences, Timer, Dialog,"
+                    + " RequestNetwork, ...) and the component types that can be added.", false, List.of(
+                    new Param("activity", "string", "Java file of the activity, e.g. \"MainActivity.java\".", true))),
+            new Spec("add_component", "Add a component to an activity, like the Component tab does. Use components"
+                    + " instead of declaring the same objects in code.", true, List.of(
+                    new Param("activity", "string", "Java file of the activity, e.g. \"MainActivity.java\".", true),
+                    new Param("type", "string", "Component type as list_components shows it, e.g. \"SharedPreferences\".", true),
+                    new Param("name", "string", "Name of the new component, e.g. \"sp\". Letters, digits and _.", true),
+                    new Param("parameter", "string", "SharedPreferences: file name. Firebase DB/Storage/Auth: path. FilePicker: MIME type such as \"image/*\".", false))),
             new Spec("read_layout_xml", "Get a layout's XML as the Direct XML editor shows it.", false, List.of(
                     new Param("layout", "string", "Layout file, e.g. \"main.xml\".", true))),
             new Spec("edit_layout_xml", "Change a layout by replacing text in the XML read_layout_xml returns, then save"
@@ -170,6 +189,10 @@ public class AgentTools {
             case "delete_file" -> "Delete " + target;
             case "read_activity_java" -> "Read " + target;
             case "edit_activity_java", "write_activity_java" -> "Change " + target;
+            case "list_events" -> "List events of " + target;
+            case "add_event" -> "Add event " + string(input, "target") + " " + string(input, "event") + " to " + target;
+            case "list_components" -> "List components of " + target;
+            case "add_component" -> "Add " + string(input, "type") + " component " + string(input, "name") + " to " + target;
             case "read_layout_xml" -> "Read layout " + target;
             case "edit_layout_xml", "write_layout_xml" -> "Change layout " + target;
             default -> name;
@@ -192,6 +215,10 @@ public class AgentTools {
                     .append("\n\nwith:\n\n")
                     .append(limit(string(input, "new_string")));
             case "delete_file" -> out.append("The file or folder and everything in it will be deleted.");
+            case "add_event" -> out.append("Code of the new event (saved as blocks):\n\n").append(limit(string(input, "code")));
+            case "add_component" -> out.append("New ").append(string(input, "type")).append(" component \"")
+                    .append(string(input, "name")).append('"')
+                    .append(string(input, "parameter").isEmpty() ? "" : " (" + string(input, "parameter") + ")");
             default -> out.append(name);
         }
         return out.toString();
@@ -211,6 +238,11 @@ public class AgentTools {
             case "edit_activity_java" -> project.editActivityJava(string(input, "activity"), string(input, "old_string"),
                     string(input, "new_string"), Boolean.TRUE.equals(input.get("replace_all")));
             case "write_activity_java" -> project.writeActivityJava(string(input, "activity"), string(input, "code"));
+            case "list_events" -> project.listEvents(string(input, "activity"));
+            case "add_event" -> project.addEvent(string(input, "activity"), string(input, "target"), string(input, "event"), string(input, "code"));
+            case "list_components" -> project.listComponents(string(input, "activity"));
+            case "add_component" -> project.addComponent(string(input, "activity"), string(input, "type"), string(input, "name"),
+                    (String) input.get("parameter"));
             case "read_layout_xml" -> project.readLayoutXml(string(input, "layout"));
             case "edit_layout_xml" -> project.editLayoutXml(string(input, "layout"), string(input, "old_string"),
                     string(input, "new_string"), Boolean.TRUE.equals(input.get("replace_all")));

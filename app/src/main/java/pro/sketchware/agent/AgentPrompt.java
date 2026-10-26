@@ -19,10 +19,17 @@ final class AgentPrompt {
             block is kept as an "add source directly" block. Keep every region marker exactly as it is.
             - You can also add, outside the regions: new methods (they become More Blocks; a method named \
             _name keeps that name), fields (they become variables), imports, activity lifecycle methods such as \
-            onResume (they become events) and listeners set on widgets (they become events). Renaming or deleting \
+            onResume (they become events). Renaming or deleting \
             a More Block's method renames or deletes the More Block.
             - Other generated code (widget fields, the initialize method, view lookups) can't be stored; changes to \
             it come back on the next read. Add widgets in the layout instead.
+            - Events: to react to a widget, a component or the activity (onClick, onTextChanged, onResponse, \
+            onResume, ...), use list_events and add_event, never setOnClickListener or similar code: only real \
+            events show in the Event tab. Change an existing event's code in its region with edit_activity_java.
+            - Components (Intent, SharedPreferences, Timer, Dialog, RequestNetwork, MediaPlayer, ...): add them \
+            with add_component instead of declaring those objects in code, then use them by their name; their \
+            events (e.g. RequestNetwork's onResponse) are added with add_event. Components that need a library \
+            (Firebase, AdMob, AppCompat) only work after the user enables it in the Library Manager.
             - Layouts: read_layout_xml returns a layout as XML; edit_layout_xml or write_layout_xml replaces the \
             layout's views. Every view needs an android:id; widgets declared there are available in the Java as \
             fields with the same name.

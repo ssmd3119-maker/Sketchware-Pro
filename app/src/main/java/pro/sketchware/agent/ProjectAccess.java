@@ -4,8 +4,11 @@ import android.content.Context;
 
 import androidx.annotation.Nullable;
 
+import com.besome.sketch.beans.ComponentBean;
+import com.besome.sketch.beans.EventBean;
 import com.besome.sketch.beans.HistoryViewBean;
 import com.besome.sketch.beans.ProjectFileBean;
+import com.besome.sketch.beans.ProjectLibraryBean;
 import com.besome.sketch.beans.ViewBean;
 
 import java.io.File;
@@ -16,6 +19,9 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -27,9 +33,12 @@ import a.a.a.cC;
 import a.a.a.eC;
 import a.a.a.jC;
 import a.a.a.lC;
+import a.a.a.oq;
+import a.a.a.uq;
 import a.a.a.wq;
 import a.a.a.yB;
 import a.a.a.yq;
+import mod.hilal.saif.components.ComponentsHandler;
 import pro.sketchware.activities.editor.view.EventCodeBridge;
 import pro.sketchware.managers.inject.InjectRootLayoutManager;
 import pro.sketchware.tools.ViewBeanParser;
@@ -365,6 +374,253 @@ public class ProjectAccess {
     public String editActivityJava(String activity, String oldString, String newString, boolean replaceAll) throws AccessException {
         String code = readActivityJava(activity);
         return writeActivityJava(activity, replace(code, oldString, newString, replaceAll, findActivity(activity).getJavaName()));
+    }
+
+    // endregion
+
+    // region Events and components
+
+    /** One event that exists or can be added. */
+    private record EventChoice(int eventType, int targetType, String targetId, String eventName) {
+    }
+
+    /**
+     * @return Every event this activity can have, like the Add Event screen lists them.
+     */
+    private List<EventChoice> eventChoices(ProjectFileBean file) {
+        eC dataManager = jC.a(scId);
+        ArrayList<EventChoice> choices = new ArrayList<>();
+        for (String event : oq.getAllActivityEvents()) {
+            if (event == null || event.isEmpty()) continue;
+            choices.add(new EventChoice(EventBean.EVENT_TYPE_ACTIVITY, 0, event, event));
+        }
+        ArrayList<ViewBean> views = new ArrayList<>();
+        ArrayList<ViewBean> layoutViews = dataManager.d(file.getXmlName());
+        if (layoutViews != null) views.addAll(layoutViews);
+        ViewBean fab = file.hasActivityOption(ProjectFileBean.OPTION_ACTIVITY_FAB) ? dataManager.h(file.getXmlName()) : null;
+        if (fab != null) views.add(fab);
+        for (ViewBean view : views) {
+            for (String event : oq.getEventsForClass(view.getClassInfo())) {
+                if (event == null || event.isEmpty()) continue;
+                if (event.equals("onBindCustomView") && (view.customView == null || view.customView.isEmpty()
+                        || view.customView.equals("none"))) continue;
+                choices.add(new EventChoice(EventBean.EVENT_TYPE_VIEW, view.type, view.id, event));
+            }
+        }
+        ArrayList<ComponentBean> components = dataManager.e(file.getJavaName());
+        if (components != null) {
+            for (ComponentBean component : components) {
+                for (String event : oq.getComponentEventsForClass(component.getClassInfo())) {
+                    if (event == null || event.isEmpty()) continue;
+                    choices.add(new EventChoice(EventBean.EVENT_TYPE_COMPONENT, component.type, component.componentId, event));
+                }
+            }
+        }
+        return choices;
+    }
+
+    private Set<String> existingEventKeys(String javaName) {
+        Set<String> keys = new HashSet<>();
+        ArrayList<EventBean> events = jC.a(scId).g(javaName);
+        if (events != null) {
+            for (EventBean event : events) keys.add(event.targetId + "_" + event.eventName);
+        }
+        return keys;
+    }
+
+    public String listEvents(String activity) throws AccessException {
+        ProjectFileBean file = findActivity(activity);
+        Set<String> existing = existingEventKeys(file.getJavaName());
+        StringBuilder added = new StringBuilder();
+        LinkedHashMap<String, ArrayList<String>> addable = new LinkedHashMap<>();
+        for (EventChoice choice : eventChoices(file)) {
+            String target = choice.eventType() == EventBean.EVENT_TYPE_ACTIVITY ? "activity" : choice.targetId();
+            if (existing.contains(choice.targetId() + "_" + choice.eventName())) {
+                added.append("- ").append(target).append(": ").append(choice.eventName()).append('\n');
+            } else {
+                addable.computeIfAbsent(target, key -> new ArrayList<>()).add(choice.eventName());
+            }
+        }
+        StringBuilder out = new StringBuilder("Events of ").append(file.getJavaName()).append(" (their code is in")
+                .append(" read_activity_java's \"//#region sw:<target>_<event>\" sections):\n");
+        out.append(added.length() == 0 ? "(none)\n" : added);
+        out.append("\nEvents that can be added with add_event (target: events):\n");
+        for (var entry : addable.entrySet()) {
+            out.append("- ").append(entry.getKey()).append(": ").append(String.join(", ", entry.getValue())).append('\n');
+        }
+        return out.toString();
+    }
+
+    /**
+     * Adds an event like the Add Event screen and saves its code as blocks.
+     *
+     * @param target "activity" for activity events, or a widget's or component's id.
+     */
+    public String addEvent(String activity, String target, String eventName, String code) throws AccessException {
+        ProjectFileBean file = findActivity(activity);
+        String wantedTarget = target == null ? "" : target.trim();
+        String wantedEvent = eventName == null ? "" : eventName.trim();
+        EventChoice match = null;
+        ArrayList<String> targetEvents = new ArrayList<>();
+        for (EventChoice choice : eventChoices(file)) {
+            boolean sameTarget = choice.eventType() == EventBean.EVENT_TYPE_ACTIVITY
+                    ? wantedTarget.equals("activity") || wantedTarget.equals(choice.targetId())
+                    : wantedTarget.equals(choice.targetId());
+            if (!sameTarget) continue;
+            targetEvents.add(choice.eventName());
+            if (choice.eventName().equals(wantedEvent)) match = choice;
+        }
+        if (match == null) {
+            if (targetEvents.isEmpty()) {
+                throw new AccessException("\"" + wantedTarget + "\" isn't \"activity\" or a widget or component of "
+                        + file.getJavaName() + ". Call list_events to see the targets.");
+            }
+            throw new AccessException(wantedTarget + " has no event \"" + wantedEvent + "\". Its events: " + String.join(", ", targetEvents));
+        }
+        String key = match.targetId() + "_" + match.eventName();
+        if (existingEventKeys(file.getJavaName()).contains(key)) {
+            throw new AccessException("The event " + key + " already exists. Change its code in the \"//#region sw:" + key
+                    + "\" section with edit_activity_java.");
+        }
+        EventCodeBridge bridge = new EventCodeBridge(scId, file);
+        bridge.apply(bridge.planNewEvent(match.eventType(), match.targetType(), match.targetId(), match.eventName(),
+                code == null ? "" : code), context);
+        projectDataChanged = true;
+        return "Added the event " + key + " to " + file.getJavaName() + ". Read its \"//#region sw:" + key
+                + "\" section with read_activity_java to check the code and the parameters the event provides.";
+    }
+
+    /** Component types offered when adding components, like the Add Component sheet. */
+    private static List<ComponentBean> componentTypes() {
+        ArrayList<ComponentBean> types = new ArrayList<>();
+        int[] builtIn = {ComponentBean.COMPONENT_TYPE_INTENT, ComponentBean.COMPONENT_TYPE_SHAREDPREF,
+                ComponentBean.COMPONENT_TYPE_FILE_PICKER, ComponentBean.COMPONENT_TYPE_CALENDAR,
+                ComponentBean.COMPONENT_TYPE_VIBRATOR, ComponentBean.COMPONENT_TYPE_TIMERTASK,
+                ComponentBean.COMPONENT_TYPE_DIALOG, ComponentBean.COMPONENT_TYPE_MEDIAPLAYER,
+                ComponentBean.COMPONENT_TYPE_SOUNDPOOL, ComponentBean.COMPONENT_TYPE_OBJECTANIMATOR,
+                ComponentBean.COMPONENT_TYPE_CAMERA, ComponentBean.COMPONENT_TYPE_GYROSCOPE,
+                ComponentBean.COMPONENT_TYPE_TEXT_TO_SPEECH, ComponentBean.COMPONENT_TYPE_SPEECH_TO_TEXT,
+                ComponentBean.COMPONENT_TYPE_REQUEST_NETWORK, ComponentBean.COMPONENT_TYPE_BLUETOOTH_CONNECT,
+                ComponentBean.COMPONENT_TYPE_LOCATION_MANAGER, ComponentBean.COMPONENT_TYPE_PROGRESS_DIALOG,
+                ComponentBean.COMPONENT_TYPE_DATE_PICKER_DIALOG, ComponentBean.COMPONENT_TYPE_TIME_PICKER_DIALOG,
+                ComponentBean.COMPONENT_TYPE_NOTIFICATION, ComponentBean.COMPONENT_TYPE_FRAGMENT_ADAPTER,
+                ComponentBean.COMPONENT_TYPE_INTERSTITIAL_AD, ComponentBean.COMPONENT_TYPE_REWARDED_VIDEO_AD,
+                ComponentBean.COMPONENT_TYPE_FIREBASE, ComponentBean.COMPONENT_TYPE_FIREBASE_AUTH,
+                ComponentBean.COMPONENT_TYPE_FIREBASE_STORAGE, ComponentBean.COMPONENT_TYPE_FIREBASE_AUTH_PHONE,
+                ComponentBean.COMPONENT_TYPE_FIREBASE_CLOUD_MESSAGE, ComponentBean.COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN};
+        for (int type : builtIn) types.add(new ComponentBean(type));
+        ComponentsHandler.add(types);
+        return types;
+    }
+
+    private String componentName(int type) {
+        try {
+            return ComponentBean.getComponentName(context, type);
+        } catch (RuntimeException e) {
+            return "type " + type;
+        }
+    }
+
+    public String listComponents(String activity) throws AccessException {
+        ProjectFileBean file = findActivity(activity);
+        StringBuilder out = new StringBuilder("Components of ").append(file.getJavaName()).append(":\n");
+        ArrayList<ComponentBean> components = jC.a(scId).e(file.getJavaName());
+        if (components == null || components.isEmpty()) {
+            out.append("(none)\n");
+        } else {
+            for (ComponentBean component : components) {
+                out.append("- ").append(component.componentId).append(": ").append(componentName(component.type));
+                if (component.param1 != null && !component.param1.isEmpty()) out.append(" (").append(component.param1).append(')');
+                out.append('\n');
+            }
+        }
+        out.append("\nTypes add_component accepts: ");
+        ArrayList<String> names = new ArrayList<>();
+        for (ComponentBean type : componentTypes()) names.add(componentName(type.type));
+        return out.append(String.join(", ", names)).append('\n').toString();
+    }
+
+    /**
+     * Adds a component like the Add Component sheet, with the same name rules and library requirements.
+     *
+     * @param parameter File name for SharedPreferences, path for Firebase DB/Storage/Auth, MIME type for FilePicker.
+     */
+    public String addComponent(String activity, String typeName, String name, @Nullable String parameter) throws AccessException {
+        ProjectFileBean file = findActivity(activity);
+        String wanted = typeName == null ? "" : typeName.replace(" ", "").toLowerCase(Locale.ROOT);
+        Integer type = null;
+        ArrayList<String> names = new ArrayList<>();
+        for (ComponentBean candidate : componentTypes()) {
+            String candidateName = componentName(candidate.type);
+            names.add(candidateName);
+            if (candidateName.replace(" ", "").toLowerCase(Locale.ROOT).equals(wanted)
+                    || ComponentBean.getComponentTypeName(candidate.type).toLowerCase(Locale.ROOT).equals(wanted)
+                    || String.valueOf(candidate.type).equals(wanted)) {
+                type = candidate.type;
+            }
+        }
+        if (type == null) throw new AccessException("Unknown component type \"" + typeName + "\". Types: " + String.join(", ", names));
+
+        String id = name == null ? "" : name.trim();
+        if (!id.matches("[a-zA-Z][a-zA-Z0-9_]*")) {
+            throw new AccessException("The component name must start with a letter and contain only letters, digits and _");
+        }
+        eC dataManager = jC.a(scId);
+        if (Arrays.asList(uq.b).contains(id) || Arrays.asList(uq.a()).contains(id)) {
+            throw new AccessException("\"" + id + "\" is a reserved name; choose another");
+        }
+        if (dataManager.a(file).contains(id)) {
+            throw new AccessException("\"" + id + "\" is already used by a widget, variable, list or component of " + file.getJavaName());
+        }
+        String param = parameter == null ? "" : parameter.trim();
+        switch (type) {
+            case ComponentBean.COMPONENT_TYPE_SHAREDPREF -> {
+                if (param.isEmpty() || param.length() > 20) {
+                    throw new AccessException("SharedPreferences needs a file name of 1 to 20 characters in \"parameter\"");
+                }
+            }
+            case ComponentBean.COMPONENT_TYPE_FIREBASE, ComponentBean.COMPONENT_TYPE_FIREBASE_STORAGE -> {
+                if (param.length() > 100) throw new AccessException("The Firebase path can be at most 100 characters");
+                if (ProjectLibraryBean.LIB_USE_N.equals(jC.c(scId).d().useYn)) {
+                    throw new AccessException("Enable Firebase in the project's Library Manager first; the user has to do that.");
+                }
+            }
+            case ComponentBean.COMPONENT_TYPE_FIREBASE_AUTH -> {
+                ProjectLibraryBean firebase = jC.c(scId).d();
+                if (ProjectLibraryBean.LIB_USE_N.equals(firebase.useYn) || firebase.reserved2 == null || firebase.reserved2.trim().isEmpty()) {
+                    throw new AccessException("Set up Firebase (with its API key) in the project's Library Manager first; the user has to do that.");
+                }
+            }
+            case ComponentBean.COMPONENT_TYPE_FRAGMENT_ADAPTER -> {
+                if (ProjectLibraryBean.LIB_USE_N.equals(jC.c(scId).c().useYn)) {
+                    throw new AccessException("Enable AppCompat and Design in the project's Library Manager first; the user has to do that.");
+                }
+            }
+            case ComponentBean.COMPONENT_TYPE_INTERSTITIAL_AD, ComponentBean.COMPONENT_TYPE_REWARDED_VIDEO_AD -> {
+                if (ProjectLibraryBean.LIB_USE_N.equals(jC.c(scId).b().useYn)) {
+                    throw new AccessException("Set up AdMob in the project's Library Manager first; the user has to do that.");
+                }
+            }
+            case ComponentBean.COMPONENT_TYPE_FILE_PICKER -> {
+                if (param.isEmpty() || param.length() > 50) {
+                    throw new AccessException("FilePicker needs a MIME type such as \"image/*\" in \"parameter\"");
+                }
+            }
+            default -> {
+            }
+        }
+        synchronized (dataManager) {
+            switch (type) {
+                case ComponentBean.COMPONENT_TYPE_SHAREDPREF, ComponentBean.COMPONENT_TYPE_FIREBASE,
+                     ComponentBean.COMPONENT_TYPE_FIREBASE_STORAGE, ComponentBean.COMPONENT_TYPE_FIREBASE_AUTH,
+                     ComponentBean.COMPONENT_TYPE_FILE_PICKER -> dataManager.a(file.getJavaName(), type, id, param);
+                default -> dataManager.a(file.getJavaName(), type, id);
+            }
+            dataManager.k();
+        }
+        projectDataChanged = true;
+        return "Added the " + componentName(type) + " component \"" + id + "\" to " + file.getJavaName()
+                + ". Its events are now listed by list_events.";
     }
 
     // endregion

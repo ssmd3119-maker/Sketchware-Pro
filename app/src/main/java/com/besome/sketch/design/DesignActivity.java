@@ -188,11 +188,10 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     });
     private final ActivityResultLauncher<Intent> openAiAgent = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
         if (result.getResultCode() == RESULT_OK) {
-            // The agent may have changed layouts and blocks.
-            if (viewTabAdapter != null) {
-                viewTabAdapter.i();
-            }
+            // The agent may have changed layouts, events, blocks and components.
+            refreshViewTabAdapter();
             refreshEventTabAdapter();
+            refreshComponentTabAdapter();
         }
     });
     private final ActivityResultLauncher<Intent> openImageManager = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
