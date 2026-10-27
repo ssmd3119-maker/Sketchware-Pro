@@ -6,6 +6,7 @@ import com.besome.sketch.beans.ComponentBean;
 import com.besome.sketch.beans.ViewBean;
 import com.google.gson.Gson;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -21,6 +22,7 @@ import mod.hilal.saif.components.ComponentsHandler;
 import mod.jbk.build.BuiltInLibraries;
 import mod.jbk.editor.manage.library.ExcludeBuiltInLibrariesActivity;
 import mod.pranav.viewbinding.ViewBindingBuilder;
+import pro.sketchware.utility.FilePathUtil;
 import pro.sketchware.utility.FileUtil;
 
 public class Lx {
@@ -81,6 +83,17 @@ public class Lx {
 
         if (isViewBindingEnabled) {
             content.append("buildFeatures {\r\n viewBinding true\r\n}\r\n");
+        }
+
+        if (new File(new FilePathUtil().getPathJni(metadata.sc_id), "Android.mk").isFile()) {
+            // C/C++ code from the project's jni folder, exported to src/main/jni
+            content.append("""
+                    externalNativeBuild {\r
+                    ndkBuild {\r
+                    path "src/main/jni/Android.mk"\r
+                    }\r
+                    }\r
+                    """);
         }
 
         content.append("}\r\n")

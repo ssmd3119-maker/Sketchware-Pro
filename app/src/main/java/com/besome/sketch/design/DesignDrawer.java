@@ -49,6 +49,10 @@ public class DesignDrawer extends LinearLayout {
             designActivity.toFontManager();
         } else if (id == R.id.item_java_manager) {
             designActivity.toJavaManager();
+        } else if (id == R.id.item_ndk_manager) {
+            designActivity.toNdkSourcesManager();
+        } else if (id == R.id.item_ai_agent) {
+            designActivity.toAiAgent();
         } else if (id == R.id.item_resource_manager) {
             designActivity.toResourceManager();
         } else if (id == R.id.item_resource_editor) {
@@ -116,12 +120,14 @@ public class DesignDrawer extends LinearLayout {
         UI.addSystemWindowInsetToPadding(this, false, false, true, false);
 
         addDrawerSubheaderItem(R.string.design_drawer_menu_title, content);
+        addDrawerItem(R.id.item_ai_agent, R.drawable.ic_mtrl_auto_awesome, R.string.design_drawer_menu_title_ai_agent, R.string.design_drawer_menu_description_ai_agent, content);
         addDrawerItem(R.id.item_library_manager, R.drawable.ic_mtrl_category, R.string.design_drawer_menu_title_library, R.string.design_drawer_menu_description_library, content);
         addDrawerItem(R.id.item_view_manager, R.drawable.ic_mtrl_devices, R.string.design_drawer_menu_title_view, R.string.design_drawer_menu_description_view, content);
         addDrawerItem(R.id.item_image_manager, R.drawable.ic_mtrl_image, R.string.design_drawer_menu_title_image, R.string.design_drawer_menu_description_image, content);
         addDrawerItem(R.id.item_sound_manager, R.drawable.ic_mtrl_music, R.string.design_drawer_menu_title_sound, R.string.design_drawer_menu_description_sound, content);
         addDrawerItem(R.id.item_font_manager, R.drawable.ic_mtrl_font, R.string.design_drawer_menu_title_font, R.string.design_drawer_menu_description_font, content);
         addDrawerItem(R.id.item_java_manager, R.drawable.ic_mtrl_java, R.string.text_title_menu_java, R.string.text_subtitle_menu_java, content);
+        addDrawerItem(R.id.item_ndk_manager, R.drawable.ic_mtrl_code, R.string.design_drawer_menu_title_ndk, R.string.design_drawer_menu_description_ndk, content);
         addDrawerItem(R.id.item_resource_manager, R.drawable.ic_mtrl_folder, R.string.text_title_menu_resource, R.string.text_subtitle_menu_resource, content);
         addDrawerItem(R.id.item_resource_editor, R.drawable.ic_mtrl_folder_code, R.string.text_title_menu_resource_editor, R.string.text_subtitle_menu_resource_editor, content);
         addDrawerItem(R.id.item_assets_manager, R.drawable.ic_mtrl_file_present, R.string.text_title_menu_assets, R.string.text_subtitle_menu_assets, content);

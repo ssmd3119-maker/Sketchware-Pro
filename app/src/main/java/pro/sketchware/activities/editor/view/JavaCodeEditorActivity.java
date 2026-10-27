@@ -13,8 +13,7 @@ import com.besome.sketch.beans.ProjectFileBean;
 import com.besome.sketch.lib.base.BaseAppCompatActivity;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -41,6 +40,7 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
     private static final int MENU_REDO = 1;
     private static final int MENU_SAVE = 2;
     private static final int MENU_RELOAD_SCHEME = 3;
+    private static final int MENU_CONVERT_TO_BLOCKS = 4;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -54,8 +54,6 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
      * The text as generated, used to detect unsaved changes. {@code null} while loading.
      */
     private String generatedCode;
-    private LinkedHashMap<String, String> generatedSections;
-    private String generatedSkeleton;
 
     private final OnBackPressedCallback onBackPressedCallback = new OnBackPressedCallback(true) {
         @Override
@@ -111,8 +109,10 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         editor.setEditable(false);
 
         binding.noteCard.setVisibility(View.VISIBLE);
-        binding.note.setText("Edit code between \"//#region sw:\" and \"//#endregion\" markers; each section is one event."
-                + " Saving turns changed sections back into blocks. Keep the markers.");
+        binding.note.setText("Each \"//#region sw:\" section is one event; saving converts its code to real blocks"
+                + " (code without a matching block stays as \"add source directly\")."
+                + " Add your own methods, fields and imports anywhere, or in the javaEditor sections."
+                + " Rename or delete a More Block's method to rename or delete the More Block.");
         binding.close.setOnClickListener(v -> binding.noteCard.setVisibility(View.GONE));
 
         loadCode(0);
@@ -155,10 +155,9 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
                     finish();
                     return;
                 }
-                generatedCode = result;
-                generatedSections = EventCodeBridge.parseSections(result);
-                generatedSkeleton = EventCodeBridge.skeleton(result);
-                editor.setText(result);
+                // The generator writes \r\n; keep one line ending so unchanged code never counts as edited.
+                generatedCode = normalizeLineEndings(result);
+                editor.setText(generatedCode);
                 editor.setEditable(true);
                 int lastLine = editor.getText().getLineCount() - 1;
                 editor.setSelection(Math.min(line, lastLine), 0);
@@ -177,6 +176,7 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
         menu.add(Menu.NONE, MENU_SAVE, Menu.NONE, "Save")
                 .setIcon(AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_save))
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(Menu.NONE, MENU_CONVERT_TO_BLOCKS, Menu.NONE, "Convert code to blocks");
         menu.add(Menu.NONE, MENU_RELOAD_SCHEME, Menu.NONE, "Reload color schemes");
         return true;
     }
@@ -194,6 +194,9 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
                     SketchwareUtil.toast("No changes to save");
                 }
             }
+            case MENU_CONVERT_TO_BLOCKS -> {
+                if (generatedCode != null) save(false, true);
+            }
             case MENU_RELOAD_SCHEME -> EditorUtils.loadJavaConfig(editor);
             default -> {
                 return super.onOptionsItemSelected(item);
@@ -208,64 +211,76 @@ public class JavaCodeEditorActivity extends BaseAppCompatActivity {
      * @param finishAfter Close the editor once saved, otherwise reload the code from the new blocks.
      */
     private void save(boolean finishAfter) {
-        String code = editor.getText().toString();
-        LinkedHashMap<String, String> sections = EventCodeBridge.parseSections(code);
-
-        for (String key : generatedSections.keySet()) {
-            if (!sections.containsKey(key)) {
-                new MaterialAlertDialogBuilder(this)
-                        .setIcon(R.drawable.ic_warning_96dp)
-                        .setTitle("Missing event markers")
-                        .setMessage("The markers of \"" + key + "\" were removed or changed, so its code can't be"
-                                + " matched to the event. Restore \"//#region sw:" + key + "\" and"
-                                + " \"//#endregion sw:" + key + "\" around its code, or use Undo.")
-                        .setPositiveButton(R.string.common_word_ok, null)
-                        .show();
-                return;
-            }
-        }
-
-        LinkedHashMap<String, String> changed = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : generatedSections.entrySet()) {
-            String key = entry.getKey();
-            String newBody = EventCodeBridge.normalizeBody(sections.get(key));
-            if (!newBody.equals(EventCodeBridge.normalizeBody(entry.getValue()))) {
-                changed.put(key, newBody);
-            }
-        }
-
-        if (!EventCodeBridge.skeleton(code).equals(generatedSkeleton)) {
-            new MaterialAlertDialogBuilder(this)
-                    .setIcon(R.drawable.ic_warning_96dp)
-                    .setTitle("Changes outside events")
-                    .setMessage("Some changes are outside the event sections (for example imports, fields or"
-                            + " generated methods). Those parts are generated from your project and can't be"
-                            + " turned into blocks, so they will be discarded.\n\n"
-                            + "Tip: put code that needs to run inside an event section, or use an"
-                            + " \"add source directly\" block in the Import event for imports.")
-                    .setPositiveButton("Save events", (d, which) -> applyAndReload(changed, finishAfter))
-                    .setNegativeButton(R.string.common_word_cancel, null)
-                    .show();
-            return;
-        }
-        applyAndReload(changed, finishAfter);
+        save(finishAfter, false);
     }
 
-    private void applyAndReload(Map<String, String> changed, boolean finishAfter) {
-        if (!changed.isEmpty()) {
-            bridge.applyChanges(changed);
-            setResult(RESULT_OK);
-        }
-        SketchwareUtil.toast(changed.isEmpty() ? "No event changes to save"
-                : "Saved " + changed.size() + (changed.size() == 1 ? " event" : " events") + " as blocks");
-        if (finishAfter) {
-            finish();
+    /**
+     * @param convertAll Also convert events whose code didn't change but still use
+     *                   "add source directly" blocks.
+     */
+    private void save(boolean finishAfter, boolean convertAll) {
+        EventCodeBridge.Plan plan = bridge.plan(generatedCode, editorText(), convertAll);
+
+        List<String> warnings = plan.warnings();
+
+        if (warnings.isEmpty()) {
+            applyAndReload(plan, finishAfter);
         } else {
-            loadCode(editor.getCursor().getLeftLine());
+            new MaterialAlertDialogBuilder(this)
+                    .setIcon(R.drawable.ic_warning_96dp)
+                    .setTitle("Before saving")
+                    .setMessage(String.join("\n\n", warnings))
+                    .setPositiveButton(Helper.getResString(R.string.common_word_save), (d, which) -> applyAndReload(plan, finishAfter))
+                    .setNegativeButton(R.string.common_word_cancel, null)
+                    .show();
         }
+    }
+
+    private void applyAndReload(EventCodeBridge.Plan plan, boolean finishAfter) {
+        if (!plan.hasChanges()) {
+            SketchwareUtil.toast(plan.summary());
+            if (finishAfter) finish();
+            return;
+        }
+        int line = editor.getCursor().getLeftLine();
+        editor.setEditable(false);
+        k();
+        executor.execute(() -> {
+            Exception error = null;
+            try {
+                bridge.apply(plan, getApplicationContext());
+            } catch (Exception e) {
+                error = e;
+            }
+            Exception failure = error;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                h();
+                if (failure != null) {
+                    editor.setEditable(true);
+                    SketchwareUtil.toastError("Failed to save: " + failure);
+                    return;
+                }
+                setResult(RESULT_OK);
+                SketchwareUtil.toast(plan.summary());
+                if (finishAfter) {
+                    finish();
+                } else {
+                    loadCode(line);
+                }
+            });
+        });
     }
 
     private boolean isContentModified() {
-        return generatedCode != null && !generatedCode.equals(editor.getText().toString());
+        return generatedCode != null && !generatedCode.equals(editorText());
+    }
+
+    private String editorText() {
+        return normalizeLineEndings(editor.getText().toString());
+    }
+
+    private static String normalizeLineEndings(String text) {
+        return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 }

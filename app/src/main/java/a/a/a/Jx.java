@@ -31,6 +31,14 @@ import pro.sketchware.control.logic.PermissionManager;
 
 public class Jx {
 
+    /**
+     * Logic keys under which the Direct Java editor stores code that doesn't belong to an event:
+     * extra imports, and extra class members such as methods, fields and inner classes.
+     * They are saved with the project's blocks like any event.
+     */
+    public static final String JAVA_EDITOR_IMPORTS_KEY = "javaEditor_imports";
+    public static final String JAVA_EDITOR_MEMBERS_KEY = "javaEditor_members";
+
     public static final String EOL = "\r\n";
     public static final Pattern WIDGET_NAME_PATTERN = Pattern.compile("\\w*\\..*\\.");
     private final ProjectSettings settings;
@@ -234,6 +242,10 @@ public class Jx {
         String importsAddedByImportBlocks = LogicHandler.imports(eventManager.generateActivityLifecycleEventCode());
         if (!importsAddedByImportBlocks.isEmpty()) {
             sb.append(importsAddedByImportBlocks).append(EOL);
+        }
+        String javaEditorImports = getJavaEditorCode(JAVA_EDITOR_IMPORTS_KEY);
+        if (!javaEditorImports.isEmpty()) {
+            sb.append(javaEditorImports).append(EOL);
         }
         sb.append(EOL);
 
@@ -579,6 +591,11 @@ public class Jx {
                 .equals(BuildSettings.SETTING_GENERIC_VALUE_TRUE)) {
             sb.append(getDeprecatedMethodsCode());
         }
+        String javaEditorMembers = getJavaEditorCode(JAVA_EDITOR_MEMBERS_KEY);
+        if (!javaEditorMembers.isEmpty()) {
+            sb.append(EOL);
+            sb.append(javaEditorMembers).append(EOL);
+        }
         sb.append("}").append(EOL);
         String code = sb.toString();
 
@@ -892,6 +909,14 @@ public class Jx {
             return Lx.getViewInitializer(replaceAll, viewBean.id, true, isViewBindingEnabled);
         }
         return Lx.getViewInitializer(replaceAll, viewBean.id, false, isViewBindingEnabled);
+    }
+
+    /**
+     * @return Code the Direct Java editor stored under {@code key}, or an empty String.
+     */
+    private String getJavaEditorCode(String key) {
+        return new Fx(projectFileBean.getActivityName(), buildConfig,
+                projectDataManager.a(projectFileBean.getJavaName(), key), isViewBindingEnabled).a();
     }
 
     private void addMoreBlockCodes() {

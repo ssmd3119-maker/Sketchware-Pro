@@ -17,6 +17,8 @@ import android.text.format.Formatter;
 import android.util.Log;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
+
 import com.android.sdklib.build.ApkBuilder;
 import com.android.sdklib.build.ApkCreationException;
 import com.android.tools.r8.CompilationMode;
@@ -71,6 +73,7 @@ import pro.sketchware.SketchApplication;
 import pro.sketchware.util.library.BuiltInLibraryManager;
 import pro.sketchware.utility.FilePathUtil;
 import pro.sketchware.utility.FileUtil;
+import pro.sketchware.ndk.NdkBuilder;
 import pro.sketchware.utility.SketchwareUtil;
 import proguard.Configuration;
 import proguard.ConfigurationParser;
@@ -91,6 +94,8 @@ public class ProjectBuilder {
     public ProguardHandler proguard;
     public ProjectSettings settings;
     private BuildProgressReceiver progressReceiver;
+    @Nullable
+    private volatile NdkBuilder activeNdkBuilder;
     private boolean buildAppBundle = false;
     private ArrayList<File> dexesToAddButNotMerge = new ArrayList<>();
 
@@ -467,6 +472,41 @@ public class ProjectBuilder {
         }
     }
 
+    /**
+     * @return Whether the project has C/C++ sources to build with the NDK.
+     */
+    public boolean hasNativeCode() {
+        return new NdkBuilder(context, yq.sc_id).hasSources();
+    }
+
+    /**
+     * Builds the project's C/C++ sources with the installed NDK. The libraries are copied into the project's
+     * native libraries, which {@link #buildApk()} and app bundles package.
+     *
+     * @throws zy With ndk-build's output if the NDK is missing or the build fails.
+     */
+    public void buildNativeCode() throws zy {
+        NdkBuilder ndkBuilder = new NdkBuilder(context, yq.sc_id);
+        if (!ndkBuilder.hasSources()) return;
+        activeNdkBuilder = ndkBuilder;
+        try {
+            String output = ndkBuilder.build(null);
+            LogUtil.d(TAG, "ndk-build output: " + output);
+        } catch (NdkBuilder.NdkBuildException e) {
+            throw new zy(e.getMessage());
+        } finally {
+            activeNdkBuilder = null;
+        }
+    }
+
+    /**
+     * Stops {@link #buildNativeCode()} if it's running.
+     */
+    public void cancelNativeBuild() {
+        NdkBuilder running = activeNdkBuilder;
+        if (running != null) running.cancel();
+    }
+
     public void buildApk() throws By {
         String firstDexPath = dexesToAddButNotMerge.isEmpty() ? yq.classesDexPath : dexesToAddButNotMerge.remove(0).getAbsolutePath();
         try {
@@ -487,6 +527,8 @@ public class ProjectBuilder {
             if (nativeLibrariesDirectory.exists()) {
                 apkBuilder.addNativeLibraries(nativeLibrariesDirectory);
             }
+
+            /* Add native libraries built with the NDK */
 
             /* Add Local libraries' native libraries */
             for (String nativeLibraryDirectory : mll.getNativeLibs()) {

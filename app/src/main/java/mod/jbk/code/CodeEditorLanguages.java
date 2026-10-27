@@ -12,6 +12,9 @@ import pro.sketchware.SketchApplication;
 public class CodeEditorLanguages {
     public static final String SCOPE_NAME_KOTLIN = "source.kotlin";
     public static final String SCOPE_NAME_XML = "text.xml";
+    public static final String SCOPE_NAME_C = "source.c";
+    public static final String SCOPE_NAME_CPP = "source.cpp";
+    public static final String SCOPE_NAME_MAKEFILE = "source.makefile";
     private static final String TAG = "CodeEditorLanguages";
 
     static {

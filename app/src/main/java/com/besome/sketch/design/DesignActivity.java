@@ -122,6 +122,8 @@ import pro.sketchware.activities.appcompat.ManageAppCompatActivity;
 import pro.sketchware.activities.editor.command.ManageXMLCommandActivity;
 import pro.sketchware.activities.editor.view.CodeViewerActivity;
 import pro.sketchware.activities.editor.view.JavaCodeEditorActivity;
+import pro.sketchware.activities.agent.AgentActivity;
+import pro.sketchware.activities.ndk.JniSourcesActivity;
 import pro.sketchware.activities.editor.view.ViewCodeEditorActivity;
 import pro.sketchware.activities.resourceseditor.ResourcesEditorActivity;
 import pro.sketchware.databinding.DesignBinding;
@@ -182,6 +184,14 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     private final ActivityResultLauncher<Intent> openJavaCodeEditor = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
         if (result.getResultCode() == RESULT_OK) {
             refreshEventTabAdapter();
+        }
+    });
+    private final ActivityResultLauncher<Intent> openAiAgent = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+        if (result.getResultCode() == RESULT_OK) {
+            // The agent may have changed layouts, events, blocks and components.
+            refreshViewTabAdapter();
+            refreshEventTabAdapter();
+            refreshComponentTabAdapter();
         }
     });
     private final ActivityResultLauncher<Intent> openImageManager = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
@@ -453,11 +463,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         k();
         ProjectSaver projectSaver = new ProjectSaver(this);
         projectSaver.execute();
-    }
-
-    @Override
-    protected boolean supportsLiquidGlass() {
-        return false;
     }
 
     @Override
@@ -990,6 +995,20 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     }
 
     /**
+     * Opens {@link JniSourcesActivity}, the project's C/C++ sources built with the NDK.
+     */
+    void toNdkSourcesManager() {
+        launchActivity(JniSourcesActivity.class, null, new Pair<>("pkgName", q.packageName));
+    }
+
+    /**
+     * Opens {@link AgentActivity}.
+     */
+    void toAiAgent() {
+        launchActivity(AgentActivity.class, openAiAgent);
+    }
+
+    /**
      * Opens {@link ManagePermissionActivity}.
      */
     void toPermissionManager() {
@@ -1106,6 +1125,8 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     }
 
     private static class BuildTask extends BaseTask implements BuildProgressReceiver {
+        /** The builder while it runs a step that can be stopped, i.e. the NDK build. */
+        private volatile ProjectBuilder runningBuilder;
         public static final String ACTION_CANCEL_BUILD = "com.besome.sketch.design.ACTION_CANCEL_BUILD";
         private static final String CHANNEL_ID = "build_notification_channel";
         private final ExecutorService executorService = Executors.newSingleThreadExecutor();
@@ -1223,6 +1244,22 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                 KotlinCompilerBridge.compileKotlinCodeIfPossible(this, builder);
                 if (canceled) {
                     return;
+                }
+
+                if (builder.hasNativeCode()) {
+                    onProgress("Building C/C++ code with the NDK...", 12);
+                    runningBuilder = builder;
+                    try {
+                        builder.buildNativeCode();
+                    } catch (zy e) {
+                        if (canceled) return;
+                        throw e;
+                    } finally {
+                        runningBuilder = null;
+                    }
+                    if (canceled) {
+                        return;
+                    }
                 }
 
                 onProgress("Java is compiling...", 13);
@@ -1351,6 +1388,8 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
 
         public void cancelBuild() {
             canceled = true;
+            ProjectBuilder builder = runningBuilder;
+            if (builder != null) builder.cancelNativeBuild();
             onProgress("Canceling build...", -1);
             if (isShowingNotification) {
                 notificationManager.cancel(notificationId);

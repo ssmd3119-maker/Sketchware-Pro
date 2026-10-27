@@ -93,6 +93,13 @@ public class FilePathUtil {
         return new File(SKETCHWARE_DATA, sc_id + "/broadcast").getAbsolutePath();
     }
 
+    /**
+     * C/C++ sources built with the NDK: Android.mk, Application.mk and source files.
+     */
+    public String getPathJni(String sc_id) {
+        return new File(SKETCHWARE_DATA, sc_id + "/files/jni").getAbsolutePath();
+    }
+
     public String getPathNativelibs(String sc_id) {
         return new File(SKETCHWARE_DATA, sc_id + "/files/native_libs").getAbsolutePath();
     }
